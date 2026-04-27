@@ -1,0 +1,35 @@
+# Go
+bin/
+*.exe
+*.test
+*.out
+vendor/
+
+# Node / Frontend
+web/node_modules/
+web/dist/
+web/.env
+web/.env.local
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Docker
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated files (check these in selectively)
+# docs/swagger.json
+# docs/swagger.yaml
+# internal/repository/*.go  # sqlc generated

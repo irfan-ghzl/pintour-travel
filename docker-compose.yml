@@ -1,0 +1,77 @@
+version: "3.9"
+
+services:
+  # ── PostgreSQL ────────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: pintour_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       pintour_db
+      POSTGRES_USER:     pintour
+      POSTGRES_PASSWORD: pintour_pass
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./db/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pintour -d pintour_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ─────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: pintour_redis
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Go API server ─────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pintour_api
+    restart: unless-stopped
+    environment:
+      SERVER_PORT:           8080
+      APP_ENV:               production
+      DATABASE_URL:          postgres://pintour:pintour_pass@db:5432/pintour_db?sslmode=disable
+      REDIS_ADDR:            redis:6379
+      REDIS_PASSWORD:        ""
+      JWT_SECRET:            change_this_to_a_strong_secret_in_production
+      JWT_EXPIRATION_HOURS:  72
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ── React web app (Nginx) ─────────────────────────────────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: pintour_web
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+
+volumes:
+  db_data:
+  redis_data:
