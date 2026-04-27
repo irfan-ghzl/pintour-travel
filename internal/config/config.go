@@ -14,8 +14,9 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Port string
-	Env  string
+	Port            string
+	Env             string
+	ConsultantPhone string
 }
 
 type DatabaseConfig struct {
@@ -37,8 +38,9 @@ type JWTConfig struct {
 func Load() *Config {
 	return &Config{
 		Server: ServerConfig{
-			Port: getEnv("SERVER_PORT", "8080"),
-			Env:  getEnv("APP_ENV", "development"),
+			Port:            getEnv("SERVER_PORT", "8080"),
+			Env:             getEnv("APP_ENV", "development"),
+			ConsultantPhone: getEnv("CONSULTANT_PHONE", ""),
 		},
 		Database: DatabaseConfig{
 			DSN: getEnv("DATABASE_URL", "postgres://pintour:pintour_pass@localhost:5432/pintour_db?sslmode=disable"),

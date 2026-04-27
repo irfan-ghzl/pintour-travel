@@ -31,16 +31,18 @@ import (
 	"syscall"
 	"time"
 
-	_ "github.com/irfan-ghzl/pintour-travel/docs"
+	bookingsvc "github.com/irfan-ghzl/pintour-travel/internal/application/booking"
+	inquirysvc "github.com/irfan-ghzl/pintour-travel/internal/application/inquiry"
+	quotationsvc "github.com/irfan-ghzl/pintour-travel/internal/application/quotation"
+	toursvc "github.com/irfan-ghzl/pintour-travel/internal/application/tour"
+	usersvc "github.com/irfan-ghzl/pintour-travel/internal/application/user"
 	"github.com/irfan-ghzl/pintour-travel/internal/cache"
 	"github.com/irfan-ghzl/pintour-travel/internal/config"
-	"github.com/irfan-ghzl/pintour-travel/internal/handler"
-	appmiddleware "github.com/irfan-ghzl/pintour-travel/internal/middleware"
-	"github.com/irfan-ghzl/pintour-travel/internal/service"
+	httpdelivery "github.com/irfan-ghzl/pintour-travel/internal/delivery/http"
+	"github.com/irfan-ghzl/pintour-travel/internal/infrastructure/postgres"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	_ "github.com/lib/pq"
-	echoSwagger "github.com/swaggo/echo-swagger"
 )
 
 func main() {
@@ -89,7 +91,20 @@ func main() {
 	}))
 
 	// ── Routes ────────────────────────────────────────────────────────────────
-	registerRoutes(e, db, cfg)
+	tourRepo := postgres.NewTourRepo(db)
+	bookingRepo := postgres.NewBookingRepo(db)
+	inquiryRepo := postgres.NewInquiryRepo(db)
+	quotationRepo := postgres.NewQuotationRepo(db)
+	userRepo := postgres.NewUserRepo(db)
+
+	httpdelivery.RegisterRoutes(e, httpdelivery.Services{
+		Tour:      toursvc.NewTourService(tourRepo),
+		Booking:   bookingsvc.NewBookingService(bookingRepo),
+		Inquiry:   inquirysvc.NewInquiryService(inquiryRepo, cfg.Server.ConsultantPhone),
+		Quotation: quotationsvc.NewQuotationService(quotationRepo),
+		User:      usersvc.NewUserService(userRepo, cfg.JWT.Secret, cfg.JWT.ExpirationHours),
+		JWTSecret: cfg.JWT.Secret,
+	})
 
 	// ── Start server ──────────────────────────────────────────────────────────
 	addr := fmt.Sprintf(":%s", cfg.Server.Port)
@@ -119,71 +134,4 @@ func main() {
 		log.Printf("server shutdown error: %v", err)
 	}
 	log.Println("Server stopped gracefully")
-}
-
-func registerRoutes(e *echo.Echo, db *sql.DB, cfg *config.Config) {
-	// Swagger UI
-	e.GET("/swagger/*", echoSwagger.WrapHandler)
-
-	// Health check
-	e.GET("/health", func(c echo.Context) error {
-		return c.JSON(http.StatusOK, map[string]string{
-			"status":  "ok",
-			"version": "1.0.0",
-		})
-	})
-
-	// Services
-	userSvc := service.NewUserService(db, cfg.JWT.Secret, cfg.JWT.ExpirationHours)
-
-	// Handlers
-	tourH := handler.NewTourHandler(db)
-	inquiryH := handler.NewInquiryHandler(db, cfg.Server.Env)
-	quotationH := handler.NewQuotationHandler(db)
-	userH := handler.NewUserHandler(userSvc)
-	dashH := handler.NewDashboardHandler()
-
-	api := e.Group("/api/v1")
-
-	// ── Public routes ──────────────────────────────────────────────────────
-	// Auth
-	api.POST("/auth/login", userH.Login)
-
-	// Packages (public read)
-	api.GET("/packages", tourH.ListPackages)
-	api.GET("/packages/:slug", tourH.GetPackage)
-
-	// Destinations (public read)
-	api.GET("/destinations", tourH.ListDestinations)
-
-	// Testimonials (public read)
-	api.GET("/testimonials", tourH.ListTestimonials)
-
-	// Inquiry (public submit)
-	api.POST("/inquiries", inquiryH.CreateInquiry)
-
-	// ── Protected admin routes ──────────────────────────────────────────────
-	jwtMW := appmiddleware.JWTMiddleware(cfg.JWT.Secret)
-
-	admin := api.Group("/admin", jwtMW)
-
-	// Auth
-	admin.GET("/auth/me", userH.Me)
-
-	// Dashboard
-	admin.GET("/dashboard/stats", dashH.GetStats)
-
-	// Packages (admin CRUD)
-	admin.POST("/packages", tourH.CreatePackage)
-	admin.PUT("/packages/:id", tourH.UpdatePackage)
-	admin.DELETE("/packages/:id", tourH.DeletePackage)
-
-	// Inquiries (admin)
-	admin.GET("/inquiries", inquiryH.ListInquiries)
-	admin.PATCH("/inquiries/:id/status", inquiryH.UpdateInquiryStatus)
-
-	// Quotations (admin)
-	admin.POST("/quotations", quotationH.CreateQuotation)
-	admin.GET("/quotations", quotationH.ListQuotations)
-	admin.GET("/quotations/:id", quotationH.GetQuotation)
 }

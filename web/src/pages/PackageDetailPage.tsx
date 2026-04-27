@@ -6,6 +6,13 @@ import Spinner from '../components/Spinner'
 import ItineraryTimeline from '../components/ItineraryTimeline'
 import { TourPackage } from '../types'
 
+interface GalleryImage {
+  id: string
+  image_url: string
+  caption?: string
+  sort_order: number
+}
+
 export default function PackageDetailPage() {
   const { slug } = useParams<{ slug: string }>()
 
@@ -13,6 +20,12 @@ export default function PackageDetailPage() {
     queryKey: ['package', slug],
     queryFn: () => api.get(`/packages/${slug}`).then((r) => r.data),
     enabled: !!slug,
+  })
+
+  const { data: gallery } = useQuery<GalleryImage[]>({
+    queryKey: ['package-gallery', pkg?.id],
+    queryFn: () => api.get(`/packages/${pkg!.id}/gallery`).then((r) => r.data),
+    enabled: !!pkg?.id,
   })
 
   if (isLoading) return <Spinner message="Memuat detail paket..." />
@@ -65,6 +78,27 @@ export default function PackageDetailPage() {
           {/* Itinerary */}
           <h2 className="text-xl font-bold text-gray-800 mb-4">Itinerary Perjalanan</h2>
           <ItineraryTimeline items={pkg.itinerary ?? []} />
+
+          {/* Gallery */}
+          {gallery && gallery.length > 0 && (
+            <div className="mt-10">
+              <h2 className="text-xl font-bold text-gray-800 mb-4">Galeri Foto</h2>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {gallery.map((img) => (
+                  <a key={img.id} href={img.image_url} target="_blank" rel="noopener noreferrer" className="group relative">
+                    <img
+                      src={img.image_url}
+                      alt={img.caption ?? pkg.title}
+                      className="w-full h-36 object-cover rounded-xl shadow-sm group-hover:opacity-90 transition-opacity"
+                    />
+                    {img.caption && (
+                      <p className="text-xs text-gray-500 mt-1 text-center truncate">{img.caption}</p>
+                    )}
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Sticky sidebar */}

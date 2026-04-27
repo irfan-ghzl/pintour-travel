@@ -11,6 +11,7 @@ import AdminDashboardPage from './pages/admin/AdminDashboardPage'
 import AdminPackagesPage from './pages/admin/AdminPackagesPage'
 import AdminInquiriesPage from './pages/admin/AdminInquiriesPage'
 import AdminQuotationsPage from './pages/admin/AdminQuotationsPage'
+import AdminBookingsPage from './pages/admin/AdminBookingsPage'
 import NotFoundPage from './pages/NotFoundPage'
 import ProtectedRoute from './components/ProtectedRoute'
 
@@ -36,6 +37,7 @@ export default function App() {
           <Route path="/admin/packages" element={<AdminPackagesPage />} />
           <Route path="/admin/inquiries" element={<AdminInquiriesPage />} />
           <Route path="/admin/quotations" element={<AdminQuotationsPage />} />
+          <Route path="/admin/bookings" element={<AdminBookingsPage />} />
         </Route>
       </Route>
 

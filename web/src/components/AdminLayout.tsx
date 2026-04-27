@@ -1,6 +1,6 @@
 import { Outlet, Link, useLocation, Navigate } from 'react-router-dom'
 import {
-  LayoutDashboard, Package, MessageSquare, FileText,
+  LayoutDashboard, Package, MessageSquare, FileText, Users,
   LogOut, MapPin,
 } from 'lucide-react'
 import { authStorage } from '../utils/auth'
@@ -10,6 +10,7 @@ const sidebarLinks = [
   { to: '/admin/packages', label: 'Paket Wisata', icon: Package },
   { to: '/admin/inquiries', label: 'Konsultasi', icon: MessageSquare },
   { to: '/admin/quotations', label: 'Penawaran', icon: FileText },
+  { to: '/admin/bookings', label: 'Booking & Manifest', icon: Users },
 ]
 
 export default function AdminLayout() {

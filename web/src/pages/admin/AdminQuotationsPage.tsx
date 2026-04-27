@@ -269,12 +269,14 @@ function QuotationDetail({ quotation, onClose }: { quotation: Quotation; onClose
 
         <div className="flex gap-3">
           <button onClick={onClose} className="btn-secondary text-sm">Tutup</button>
-          <button
-            onClick={() => window.print()}
-            className="btn-primary text-sm"
+          <a
+            href={`${import.meta.env.VITE_API_BASE_URL ?? '/api/v1'}/quotations/${quotation.id}/print`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn-primary text-sm inline-flex items-center"
           >
             Cetak / Simpan PDF
-          </button>
+          </a>
         </div>
       </div>
     </div>

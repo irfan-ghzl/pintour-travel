@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const consultantPhone = "6281234567890" // override via env in production
+const consultantPhone = "6282121952655" // override via env in production
 
 // WhatsAppLinkParams holds the data needed to build a WA consultation link.
 type WhatsAppLinkParams struct {

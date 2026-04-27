@@ -48,12 +48,16 @@ func (h *InquiryHandler) CreateInquiry(c echo.Context) error {
 		).Scan(&packageTitle)
 	}
 
+	departureDate := ""
+	if req.DepartureDate != nil {
+		departureDate = *req.DepartureDate
+	}
 	waLink := service.BuildWhatsAppLink(h.consultantPhone, service.WhatsAppLinkParams{
 		FullName:      req.FullName,
 		Destination:   req.Destination,
 		NumPeople:     req.NumPeople,
 		DurationDays:  req.DurationDays,
-		DepartureDate: req.DepartureDate,
+		DepartureDate: departureDate,
 		Budget:        req.Budget,
 		Notes:         req.Notes,
 		PackageTitle:  packageTitle,
@@ -77,7 +81,7 @@ func (h *InquiryHandler) CreateInquiry(c echo.Context) error {
 		RETURNING id, created_at`,
 		req.FullName, req.Email, req.Phone, req.Destination, tourPkgID,
 		req.NumPeople, req.Budget, req.DurationDays, req.DepartureDate,
-		req.Notes, waLink,
+		req.Notes, waLink, // DepartureDate is *string → NULL when nil
 	).Scan(&id, &createdAt)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to save inquiry: "+err.Error())
@@ -137,10 +141,10 @@ func (h *InquiryHandler) ListInquiries(c echo.Context) error {
 	for rows.Next() {
 		var (
 			id, fullName, statusVal, waLink, createdAt, packageTitle string
-			email, phone, destination, departureDate                  *string
-			numPeople                                                  int
-			budget                                                     *float64
-			durationDays                                               *int
+			email, phone, destination, departureDate                 *string
+			numPeople                                                int
+			budget                                                   *float64
+			durationDays                                             *int
 		)
 		if err := rows.Scan(
 			&id, &fullName, &email, &phone, &destination,
@@ -215,7 +219,7 @@ type CreateInquiryRequest struct {
 	NumPeople     int     `json:"num_people"`
 	Budget        float64 `json:"budget"`
 	DurationDays  int     `json:"duration_days"`
-	DepartureDate string  `json:"departure_date"`
+	DepartureDate *string `json:"departure_date"`
 	Notes         string  `json:"notes"`
 }
 

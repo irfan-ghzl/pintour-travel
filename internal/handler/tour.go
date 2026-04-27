@@ -36,16 +36,59 @@ func (h *TourHandler) ListPackages(c echo.Context) error {
 	}
 	offset := (page - 1) * perPage
 
-	rows, err := h.db.QueryContext(c.Request().Context(), `
+	// Build dynamic filter
+	args := []interface{}{}
+	where := "tp.is_active = true"
+	argIdx := 0
+
+	if dest := c.QueryParam("destination_id"); dest != "" {
+		argIdx++
+		where += " AND tp.destination_id = $" + strconv.Itoa(argIdx)
+		args = append(args, dest)
+	}
+	if pt := c.QueryParam("package_type"); pt != "" {
+		argIdx++
+		where += " AND tp.package_type = $" + strconv.Itoa(argIdx)
+		args = append(args, pt)
+	}
+	if priceMin := c.QueryParam("price_min"); priceMin != "" {
+		if v, err := strconv.ParseFloat(priceMin, 64); err == nil {
+			argIdx++
+			where += " AND tp.price >= $" + strconv.Itoa(argIdx)
+			args = append(args, v)
+		}
+	}
+	if priceMax := c.QueryParam("price_max"); priceMax != "" {
+		if v, err := strconv.ParseFloat(priceMax, 64); err == nil {
+			argIdx++
+			where += " AND tp.price <= $" + strconv.Itoa(argIdx)
+			args = append(args, v)
+		}
+	}
+	if dur := c.QueryParam("duration_days"); dur != "" {
+		if v, err := strconv.Atoi(dur); err == nil && v > 0 {
+			argIdx++
+			where += " AND tp.duration_days = $" + strconv.Itoa(argIdx)
+			args = append(args, v)
+		}
+	}
+
+	limitArg := argIdx + 1
+	offsetArg := argIdx + 2
+	args = append(args, perPage, offset)
+
+	query := `
 		SELECT tp.id, tp.title, tp.slug, tp.description, tp.price, tp.price_label,
 		       tp.duration_days, tp.max_participants, tp.min_participants,
 		       tp.package_type, tp.cover_image_url, tp.is_active, tp.created_at,
 		       d.name AS destination_name, d.country AS destination_country
 		FROM tour_packages tp
 		LEFT JOIN destinations d ON d.id = tp.destination_id
-		WHERE tp.is_active = true
+		WHERE ` + where + `
 		ORDER BY tp.created_at DESC
-		LIMIT $1 OFFSET $2`, perPage, offset)
+		LIMIT $` + strconv.Itoa(limitArg) + ` OFFSET $` + strconv.Itoa(offsetArg)
+
+	rows, err := h.db.QueryContext(c.Request().Context(), query, args...)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fetch packages")
 	}
@@ -55,12 +98,12 @@ func (h *TourHandler) ListPackages(c echo.Context) error {
 	for rows.Next() {
 		var (
 			id, title, slug, description, priceLabel, packageType, coverImageURL string
-			price                                                                  float64
-			durationDays, minParticipants                                          int
-			maxParticipants                                                         *int
-			isActive                                                                bool
-			createdAt                                                               string
-			destName, destCountry                                                   *string
+			price                                                                float64
+			durationDays, minParticipants                                        int
+			maxParticipants                                                      *int
+			isActive                                                             bool
+			createdAt                                                            string
+			destName, destCountry                                                *string
 		)
 		if err := rows.Scan(
 			&id, &title, &slug, &description, &price, &priceLabel,
@@ -86,9 +129,11 @@ func (h *TourHandler) ListPackages(c echo.Context) error {
 		packages = []map[string]interface{}{}
 	}
 
+	// Count with same filters (no limit/offset)
+	countArgs := args[:len(args)-2]
 	var total int
 	h.db.QueryRowContext(c.Request().Context(),
-		`SELECT COUNT(*) FROM tour_packages WHERE is_active = true`).Scan(&total)
+		`SELECT COUNT(*) FROM tour_packages tp WHERE `+where, countArgs...).Scan(&total)
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"data":     packages,
@@ -124,11 +169,11 @@ func (h *TourHandler) GetPackage(c echo.Context) error {
 
 	var (
 		id, title, dbSlug, description, priceLabel, packageType, coverImageURL string
-		price                                                                    float64
-		durationDays, minParticipants                                            int
-		maxParticipants                                                           *int
-		isActive                                                                  bool
-		createdAt, destName, destCountry                                          string
+		price                                                                  float64
+		durationDays, minParticipants                                          int
+		maxParticipants                                                        *int
+		isActive                                                               bool
+		createdAt, destName, destCountry                                       string
 	)
 	if err := row.Scan(
 		&id, &title, &dbSlug, &description, &price, &priceLabel,
@@ -164,7 +209,7 @@ func (h *TourHandler) GetPackage(c echo.Context) error {
 		for itineraryRows.Next() {
 			var (
 				itemID, itemTitle, itemDesc, itemLoc, startTime, endTime, actType string
-				dayNumber, sortOrder                                                int
+				dayNumber, sortOrder                                              int
 			)
 			if err := itineraryRows.Scan(&itemID, &dayNumber, &itemTitle, &itemDesc,
 				&itemLoc, &startTime, &endTime, &actType, &sortOrder); err != nil {
@@ -197,18 +242,18 @@ func (h *TourHandler) GetPackage(c echo.Context) error {
 //	@Router      /api/v1/admin/packages [post]
 func (h *TourHandler) CreatePackage(c echo.Context) error {
 	var body struct {
-		DestinationID   *string  `json:"destination_id"`
-		Title           string   `json:"title"`
-		Slug            string   `json:"slug"`
-		Description     string   `json:"description"`
-		Price           float64  `json:"price"`
-		PriceLabel      string   `json:"price_label"`
-		DurationDays    int      `json:"duration_days"`
-		MaxParticipants *int     `json:"max_participants"`
-		MinParticipants int      `json:"min_participants"`
-		PackageType     string   `json:"package_type"`
-		CoverImageURL   string   `json:"cover_image_url"`
-		IsActive        bool     `json:"is_active"`
+		DestinationID   *string `json:"destination_id"`
+		Title           string  `json:"title"`
+		Slug            string  `json:"slug"`
+		Description     string  `json:"description"`
+		Price           float64 `json:"price"`
+		PriceLabel      string  `json:"price_label"`
+		DurationDays    int     `json:"duration_days"`
+		MaxParticipants *int    `json:"max_participants"`
+		MinParticipants int     `json:"min_participants"`
+		PackageType     string  `json:"package_type"`
+		CoverImageURL   string  `json:"cover_image_url"`
+		IsActive        bool    `json:"is_active"`
 	}
 	if err := c.Bind(&body); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
@@ -256,18 +301,18 @@ func (h *TourHandler) CreatePackage(c echo.Context) error {
 func (h *TourHandler) UpdatePackage(c echo.Context) error {
 	id := c.Param("id")
 	var body struct {
-		DestinationID   *string  `json:"destination_id"`
-		Title           string   `json:"title"`
-		Slug            string   `json:"slug"`
-		Description     string   `json:"description"`
-		Price           float64  `json:"price"`
-		PriceLabel      string   `json:"price_label"`
-		DurationDays    int      `json:"duration_days"`
-		MaxParticipants *int     `json:"max_participants"`
-		MinParticipants int      `json:"min_participants"`
-		PackageType     string   `json:"package_type"`
-		CoverImageURL   string   `json:"cover_image_url"`
-		IsActive        bool     `json:"is_active"`
+		DestinationID   *string `json:"destination_id"`
+		Title           string  `json:"title"`
+		Slug            string  `json:"slug"`
+		Description     string  `json:"description"`
+		Price           float64 `json:"price"`
+		PriceLabel      string  `json:"price_label"`
+		DurationDays    int     `json:"duration_days"`
+		MaxParticipants *int    `json:"max_participants"`
+		MinParticipants int     `json:"min_participants"`
+		PackageType     string  `json:"package_type"`
+		CoverImageURL   string  `json:"cover_image_url"`
+		IsActive        bool    `json:"is_active"`
 	}
 	if err := c.Bind(&body); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")

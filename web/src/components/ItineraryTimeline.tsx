@@ -40,7 +40,7 @@ export default function ItineraryTimeline({ items }: Props) {
 
             {/* Timeline items */}
             <div className="ml-5 border-l-2 border-primary-100 pl-6 space-y-5">
-              {dayItems.map((item, idx) => (
+              {dayItems.map((item) => (
                 <div key={item.id} className="relative">
                   {/* Dot */}
                   <div className="absolute -left-[33px] w-4 h-4 rounded-full bg-white border-2 border-primary-400 mt-0.5" />

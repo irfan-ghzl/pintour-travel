@@ -6,7 +6,7 @@ import { Testimonial } from '../types'
 import { useState } from 'react'
 
 export default function TestimonialsPage() {
-  const [page, setPage] = useState(1)
+  const [page, _setPage] = useState(1)
   const perPage = 9
 
   const { data, isLoading } = useQuery<Testimonial[]>({

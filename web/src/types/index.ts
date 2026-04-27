@@ -152,3 +152,40 @@ export interface Testimonial {
   photo_url?: string
   created_at: string
 }
+
+// ─── Bookings ─────────────────────────────────────────────────────────────────
+
+export interface BookingParticipant {
+  id: string
+  full_name: string
+  id_type: string
+  id_number: string
+  date_of_birth?: string
+  phone?: string
+}
+
+export interface Booking {
+  id: string
+  booking_code: string
+  customer_name: string
+  customer_email?: string
+  customer_phone?: string
+  package_title?: string
+  package_id?: string
+  departure_date: string
+  num_people: number
+  total_price: number
+  payment_status: string
+  booking_status: string
+  notes?: string
+  participants?: BookingParticipant[]
+  created_at: string
+}
+
+export interface BookingsResponse {
+  data: Booking[]
+  total: number
+  page: number
+  per_page: number
+}
+
