@@ -1,12 +1,10 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-const base = process.env.VITE_BASE_PATH || '/pintour-travel/'
-
 // https://vitejs.dev/config/
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   plugins: [react()],
-  base,
+  base: command === 'build' ? (process.env.VITE_BASE_PATH || '/pintour-travel/') : '/',
   server: {
     port: 3000,
     proxy: {
