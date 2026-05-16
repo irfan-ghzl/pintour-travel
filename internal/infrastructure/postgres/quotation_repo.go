@@ -99,6 +99,13 @@ func (r *QuotationRepo) GetByID(ctx context.Context, id string) (*quotation.Deta
 	return &quotation.Detail{Quotation: q, Items: items}, nil
 }
 
+func (r *QuotationRepo) UpdateStatus(ctx context.Context, id, status string) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE quotations SET status=$2, updated_at=NOW() WHERE id=$1`,
+		id, status)
+	return err
+}
+
 func (r *QuotationRepo) List(ctx context.Context, f quotation.Filter) ([]quotation.Quotation, int, error) {
 	offset := (f.Page - 1) * f.PerPage
 	rows, err := r.db.QueryContext(ctx, `

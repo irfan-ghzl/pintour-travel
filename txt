@@ -1,0 +1,64 @@
+BAB I
+PENDAHULUAN
+
+1.1. Latar Belakang Ide Perangkat Lunak
+
+Industri pariwisata merupakan salah satu sektor ekonomi yang terus mengalami pertumbuhan signifikan di Indonesia. Berdasarkan data Badan Pusat Statistik (BPS) tahun 2023, jumlah wisatawan nusantara yang melakukan perjalanan wisata mencapai lebih dari 700 juta perjalanan, menunjukkan tingginya minat masyarakat Indonesia terhadap kegiatan wisata. Pertumbuhan ini turut mendorong perkembangan usaha jasa perjalanan atau agen travel yang berperan sebagai perantara antara wisatawan dan penyedia layanan pariwisata.
+
+Namun di sisi lain, banyak agen travel berskala kecil dan menengah yang masih mengelola operasional bisnis mereka secara manual atau menggunakan alat bantu yang tidak terintegrasi, seperti pencatatan pesanan melalui pesan WhatsApp, pembuatan penawaran harga melalui dokumen Word atau Excel, serta penyampaian itinerary perjalanan dalam bentuk file yang dikirimkan secara terpisah. Kondisi ini menimbulkan berbagai permasalahan seperti ketidakefisienan proses, risiko kehilangan data, lambatnya respons kepada pelanggan, serta sulitnya pemantauan status pemesanan.
+
+Penelitian yang dilakukan oleh Prasetyo dan Wibowo (2022) dalam jurnal Sistem Informasi dan Teknologi berjudul "Rancang Bangun Sistem Informasi Manajemen Perjalanan Wisata Berbasis Web" menyimpulkan bahwa penerapan sistem informasi berbasis web pada agen travel mampu meningkatkan efisiensi operasional hingga 60% dan mengurangi kesalahan pencatatan data secara signifikan. Temuan serupa dikemukakan oleh Sari et al. (2021) dalam jurnal Informatika yang menyatakan bahwa digitalisasi proses bisnis pada usaha pariwisata skala kecil memberikan dampak positif terhadap kepuasan pelanggan dan daya saing usaha.
+
+Berdasarkan permasalahan tersebut, diusulkan pengembangan perangkat lunak bernama Pintour Travel, yaitu sistem informasi manajemen agen tour dan travel berbasis web yang mengintegrasikan pengelolaan paket wisata, manajemen itinerary, penanganan permintaan wisata (inquiry), pembuatan penawaran harga (quotation), serta pencatatan pemesanan dalam satu platform terpadu. Sistem ini dikembangkan menggunakan pendekatan Domain-Driven Design (DDD) pada sisi backend dengan bahasa pemrograman Go, serta antarmuka pengguna yang responsif menggunakan React dan Tailwind CSS.
+
+
+1.2. Analisa Masalah Dan Solusi
+
+Berdasarkan latar belakang yang telah dipaparkan, dapat diidentifikasi beberapa permasalahan utama yang dihadapi oleh agen tour dan travel dalam mengelola operasional bisnisnya, antara lain:
+
+1. Pengelolaan paket wisata yang tidak terstruktur — informasi paket, harga, durasi, dan itinerary perjalanan tersebar di berbagai media (dokumen, pesan chat, dan sebagainya) sehingga sulit dikelola dan diperbarui secara konsisten.
+
+2. Proses penanganan inquiry yang lambat — permintaan informasi dari calon pelanggan ditangani secara manual sehingga respons memakan waktu lama dan potensi pelanggan sering tidak tertindaklanjuti.
+
+3. Pembuatan penawaran harga (quotation) yang tidak efisien — staf harus membuat dokumen penawaran dari awal untuk setiap pelanggan tanpa adanya template atau sistem yang membantu, sehingga membutuhkan waktu yang lama dan rawan kesalahan.
+
+4. Tidak adanya sistem pemantauan pemesanan — manajemen tidak memiliki visibilitas yang jelas terhadap status pemesanan, jumlah peserta, maupun status pembayaran setiap paket wisata yang berjalan.
+
+Solusi yang diusulkan adalah pengembangan perangkat lunak Pintour Travel sebagai sistem informasi terpadu berbasis web, dengan fitur-fitur utama sebagai berikut:
+
+- Manajemen paket wisata lengkap dengan itinerary per hari dan galeri foto.
+- Modul inquiry untuk menampung dan menindaklanjuti permintaan calon pelanggan.
+- Modul quotation untuk membuat, mencetak, dan mengirimkan penawaran harga secara cepat.
+- Modul pemesanan (booking) dengan pencatatan data peserta dan status pembayaran.
+- Dashboard admin untuk memantau statistik dan aktivitas bisnis secara real-time.
+- Antarmuka publik yang informatif agar calon pelanggan dapat melihat paket wisata dan mengajukan permintaan secara mandiri.
+
+
+1.3. Tujuan dan Manfaat Perangkat Lunak
+
+Tujuan dari pengembangan perangkat lunak Pintour Travel adalah:
+
+1. Membangun sistem informasi manajemen agen tour dan travel berbasis web yang mengintegrasikan seluruh proses bisnis mulai dari pengelolaan paket, penerimaan inquiry, pembuatan quotation, hingga pencatatan pemesanan.
+2. Menerapkan arsitektur Domain-Driven Design (DDD) pada backend sistem guna menghasilkan kode yang terstruktur, mudah dikembangkan, dan dapat dipelihara dalam jangka panjang.
+3. Menyediakan antarmuka admin yang interaktif dan mudah digunakan sehingga staf agen travel dapat mengelola data tanpa memerlukan keahlian teknis khusus.
+4. Menyediakan halaman publik yang informatif dan responsif agar calon pelanggan dapat mengakses informasi paket wisata kapan saja dan dari perangkat apa pun.
+
+Manfaat dari perangkat lunak ini antara lain:
+
+1. Bagi agen travel — meningkatkan efisiensi operasional, mengurangi kesalahan pencatatan data, dan mempercepat proses penanganan permintaan pelanggan.
+2. Bagi pelanggan — memudahkan akses informasi paket wisata, melihat itinerary secara detail, dan mengajukan permintaan wisata secara mandiri melalui platform digital.
+3. Bagi manajemen — menyediakan data terpusat dan dashboard statistik sehingga pengambilan keputusan bisnis dapat dilakukan berdasarkan data yang akurat dan terkini.
+4. Bagi pengembang — sebagai referensi implementasi arsitektur DDD pada proyek berbasis Go (Golang) dengan integrasi frontend React yang modern.
+
+
+1.4. Batasan Perangkat Lunak
+
+Dalam pengembangan perangkat lunak Pintour Travel ini, terdapat beberapa batasan yang perlu diperhatikan, yaitu:
+
+1. Sistem hanya mencakup pengelolaan paket wisata domestik maupun internasional yang ditawarkan oleh satu agen travel (single-tenant); belum mendukung multi-agen atau multi-tenant.
+2. Fitur pembayaran online (payment gateway) tidak termasuk dalam lingkup pengembangan ini; pencatatan pembayaran dilakukan secara manual oleh admin berdasarkan konfirmasi di luar sistem.
+3. Integrasi notifikasi WhatsApp hanya berupa pembuatan tautan WhatsApp otomatis dan tidak mencakup integrasi dengan WhatsApp Business API secara penuh.
+4. Sistem tidak mencakup modul akuntansi atau laporan keuangan yang terinci; pelaporan terbatas pada statistik dasar di dashboard admin.
+5. Aplikasi ini berbasis web dan diakses melalui browser; tidak dikembangkan versi aplikasi mobile native (Android/iOS).
+6. Pengelolaan konten halaman publik (seperti teks beranda dan testimoni) hanya dapat dilakukan melalui panel admin yang telah disediakan, bukan melalui Content Management System (CMS) generik.
+

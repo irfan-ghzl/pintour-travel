@@ -35,7 +35,8 @@ var ValidPaymentStatuses = map[string]bool{
 
 // ValidBookingStatuses are the allowed values for booking_status.
 var ValidBookingStatuses = map[string]bool{
-	"confirmed": true, "cancelled": true, "completed": true,
+	"confirmed": true, "awaiting_docs": true, "visa_process": true,
+	"ready_to_depart": true, "departed": true, "completed": true, "cancelled": true,
 }
 
 func (s *BookingService) UpdatePaymentStatus(ctx context.Context, id, status string) error {
@@ -44,6 +45,18 @@ func (s *BookingService) UpdatePaymentStatus(ctx context.Context, id, status str
 
 func (s *BookingService) UpdateBookingStatus(ctx context.Context, id, status string) error {
 	return s.repo.UpdateBookingStatus(ctx, id, status)
+}
+
+func (s *BookingService) SetTourLeader(ctx context.Context, id, leaderID string) error {
+	return s.repo.SetTourLeader(ctx, id, leaderID)
+}
+
+func (s *BookingService) SetWAGroup(ctx context.Context, id, link string) error {
+	return s.repo.SetWAGroup(ctx, id, link)
+}
+
+func (s *BookingService) SetBriefingDone(ctx context.Context, id string, done bool) error {
+	return s.repo.SetBriefingDone(ctx, id, done)
 }
 
 func (s *BookingService) DeleteBooking(ctx context.Context, id string) error {

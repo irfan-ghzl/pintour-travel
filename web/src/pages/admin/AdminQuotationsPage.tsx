@@ -5,6 +5,19 @@ import api from '../../utils/api'
 import { QuotationsResponse, Quotation, QuotationItem } from '../../types'
 import Spinner from '../../components/Spinner'
 
+const QUOTATION_STATUSES = ['draft', 'sent', 'accepted', 'rejected', 'expired'] as const
+
+function statusStyle(s: string): string {
+  const map: Record<string, string> = {
+    draft:    'bg-gray-100 text-gray-500',
+    sent:     'bg-blue-100 text-blue-700',
+    accepted: 'bg-green-100 text-green-700',
+    rejected: 'bg-red-100 text-red-700',
+    expired:  'bg-orange-100 text-orange-600',
+  }
+  return map[s] ?? 'bg-gray-100 text-gray-500'
+}
+
 export default function AdminQuotationsPage() {
   const [page, setPage] = useState(1)
   const [showForm, setShowForm] = useState(false)
@@ -14,6 +27,12 @@ export default function AdminQuotationsPage() {
   const { data, isLoading } = useQuery<QuotationsResponse>({
     queryKey: ['admin-quotations', page],
     queryFn: () => api.get(`/admin/quotations?page=${page}&per_page=10`).then((r) => r.data),
+  })
+
+  const statusMut = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: string }) =>
+      api.patch(`/admin/quotations/${id}/status`, { status }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-quotations'] }),
   })
 
   if (isLoading) return <Spinner message="Memuat penawaran..." />
@@ -61,11 +80,15 @@ export default function AdminQuotationsPage() {
                   Rp {q.total_price.toLocaleString('id-ID')}
                 </td>
                 <td className="px-5 py-3">
-                  <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full ${
-                    q.status === 'sent' ? 'bg-blue-100 text-blue-700' :
-                    q.status === 'accepted' ? 'bg-green-100 text-green-700' :
-                    'bg-gray-100 text-gray-500'
-                  }`}>{q.status}</span>
+                  <select
+                    value={q.status}
+                    onChange={(e) => statusMut.mutate({ id: q.id, status: e.target.value })}
+                    className={`text-xs font-medium px-2 py-1 rounded-full border-0 cursor-pointer focus:ring-1 focus:ring-primary-400 ${statusStyle(q.status)}`}
+                  >
+                    {QUOTATION_STATUSES.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
                 </td>
                 <td className="px-5 py-3 text-gray-400 text-xs">
                   {new Date(q.created_at).toLocaleDateString('id-ID')}

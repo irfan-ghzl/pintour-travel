@@ -27,3 +27,7 @@ func (s *QuotationService) GetByID(ctx context.Context, id string) (*quotation.D
 func (s *QuotationService) List(ctx context.Context, f quotation.Filter) ([]quotation.Quotation, int, error) {
 	return s.repo.List(ctx, f)
 }
+
+func (s *QuotationService) UpdateStatus(ctx context.Context, id, status string) error {
+	return s.repo.UpdateStatus(ctx, id, status)
+}

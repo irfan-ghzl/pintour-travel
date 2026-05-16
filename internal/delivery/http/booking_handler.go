@@ -228,3 +228,81 @@ func (h *BookingHandler) DeleteBooking(c echo.Context) error {
 	}
 	return c.NoContent(http.StatusNoContent)
 }
+
+// SetTourLeader godoc
+//
+//	@Summary     Assign tour leader to booking (admin)
+//	@Tags        bookings
+//	@Accept      json
+//	@Produce     json
+//	@Security    BearerAuth
+//	@Param       id path string true "Booking ID"
+//	@Success     200 {object} map[string]interface{}
+//	@Router      /api/v1/admin/bookings/{id}/leader [patch]
+func (h *BookingHandler) SetTourLeader(c echo.Context) error {
+	id := c.Param("id")
+	var body struct {
+		TourLeaderID string `json:"tour_leader_id"`
+	}
+	if err := c.Bind(&body); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	if body.TourLeaderID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "tour_leader_id is required")
+	}
+	if err := h.svc.SetTourLeader(c.Request().Context(), id, body.TourLeaderID); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to set tour leader")
+	}
+	return c.JSON(http.StatusOK, map[string]interface{}{"id": id, "tour_leader_id": body.TourLeaderID})
+}
+
+// SetWAGroup godoc
+//
+//	@Summary     Set WhatsApp group link for booking (admin)
+//	@Tags        bookings
+//	@Accept      json
+//	@Produce     json
+//	@Security    BearerAuth
+//	@Param       id path string true "Booking ID"
+//	@Success     200 {object} map[string]interface{}
+//	@Router      /api/v1/admin/bookings/{id}/wa-group [patch]
+func (h *BookingHandler) SetWAGroup(c echo.Context) error {
+	id := c.Param("id")
+	var body struct {
+		WAGroupLink string `json:"wa_group_link"`
+	}
+	if err := c.Bind(&body); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	if body.WAGroupLink == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "wa_group_link is required")
+	}
+	if err := h.svc.SetWAGroup(c.Request().Context(), id, body.WAGroupLink); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to set WA group")
+	}
+	return c.JSON(http.StatusOK, map[string]interface{}{"id": id, "wa_group_link": body.WAGroupLink})
+}
+
+// SetBriefingDone godoc
+//
+//	@Summary     Mark briefing done for a booking (admin)
+//	@Tags        bookings
+//	@Accept      json
+//	@Produce     json
+//	@Security    BearerAuth
+//	@Param       id path string true "Booking ID"
+//	@Success     200 {object} map[string]interface{}
+//	@Router      /api/v1/admin/bookings/{id}/briefing [patch]
+func (h *BookingHandler) SetBriefingDone(c echo.Context) error {
+	id := c.Param("id")
+	var body struct {
+		BriefingDone bool `json:"briefing_done"`
+	}
+	if err := c.Bind(&body); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	if err := h.svc.SetBriefingDone(c.Request().Context(), id, body.BriefingDone); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to update briefing status")
+	}
+	return c.JSON(http.StatusOK, map[string]interface{}{"id": id, "briefing_done": body.BriefingDone})
+}

@@ -7,7 +7,7 @@ COPY web/package.json web/package-lock.json* ./
 RUN npm ci --prefer-offline
 
 COPY web/ .
-RUN npm run build
+RUN VITE_BASE_PATH=/ npm run build
 
 # ── Stage 2: Serve with Nginx ─────────────────────────────────────────────────
 FROM nginx:1.27-alpine

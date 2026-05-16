@@ -7,4 +7,5 @@ type Repository interface {
 	Create(ctx context.Context, p CreateParams) (string, error)
 	GetByID(ctx context.Context, id string) (*Detail, error)
 	List(ctx context.Context, f Filter) ([]Quotation, int, error)
+	UpdateStatus(ctx context.Context, id, status string) error
 }

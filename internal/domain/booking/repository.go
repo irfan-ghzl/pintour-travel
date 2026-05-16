@@ -9,5 +9,8 @@ type Repository interface {
 	Create(ctx context.Context, p CreateParams) (id, code string, err error)
 	UpdatePaymentStatus(ctx context.Context, id, status string) error
 	UpdateBookingStatus(ctx context.Context, id, status string) error
+	SetTourLeader(ctx context.Context, id, leaderID string) error
+	SetWAGroup(ctx context.Context, id, link string) error
+	SetBriefingDone(ctx context.Context, id string, done bool) error
 	Delete(ctx context.Context, id string) error
 }

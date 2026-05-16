@@ -32,7 +32,9 @@ import (
 	"time"
 
 	bookingsvc "github.com/irfan-ghzl/pintour-travel/internal/application/booking"
+	documentsvc "github.com/irfan-ghzl/pintour-travel/internal/application/document"
 	inquirysvc "github.com/irfan-ghzl/pintour-travel/internal/application/inquiry"
+	paymentsvc "github.com/irfan-ghzl/pintour-travel/internal/application/payment"
 	quotationsvc "github.com/irfan-ghzl/pintour-travel/internal/application/quotation"
 	toursvc "github.com/irfan-ghzl/pintour-travel/internal/application/tour"
 	usersvc "github.com/irfan-ghzl/pintour-travel/internal/application/user"
@@ -96,6 +98,8 @@ func main() {
 	inquiryRepo := postgres.NewInquiryRepo(db)
 	quotationRepo := postgres.NewQuotationRepo(db)
 	userRepo := postgres.NewUserRepo(db)
+	paymentRepo := postgres.NewPaymentRepo(db)
+	documentRepo := postgres.NewDocumentRepo(db)
 
 	httpdelivery.RegisterRoutes(e, httpdelivery.Services{
 		Tour:      toursvc.NewTourService(tourRepo),
@@ -103,6 +107,8 @@ func main() {
 		Inquiry:   inquirysvc.NewInquiryService(inquiryRepo, cfg.Server.ConsultantPhone),
 		Quotation: quotationsvc.NewQuotationService(quotationRepo),
 		User:      usersvc.NewUserService(userRepo, cfg.JWT.Secret, cfg.JWT.ExpirationHours),
+		Payment:   paymentsvc.NewPaymentService(paymentRepo),
+		Document:  documentsvc.NewDocumentService(documentRepo),
 		JWTSecret: cfg.JWT.Secret,
 	})
 

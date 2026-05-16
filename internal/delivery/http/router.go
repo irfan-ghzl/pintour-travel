@@ -5,7 +5,9 @@ import (
 
 	_ "github.com/irfan-ghzl/pintour-travel/docs"
 	bookingsvc "github.com/irfan-ghzl/pintour-travel/internal/application/booking"
+	documentsvc "github.com/irfan-ghzl/pintour-travel/internal/application/document"
 	inquirysvc "github.com/irfan-ghzl/pintour-travel/internal/application/inquiry"
+	paymentsvc "github.com/irfan-ghzl/pintour-travel/internal/application/payment"
 	quotationsvc "github.com/irfan-ghzl/pintour-travel/internal/application/quotation"
 	toursvc "github.com/irfan-ghzl/pintour-travel/internal/application/tour"
 	usersvc "github.com/irfan-ghzl/pintour-travel/internal/application/user"
@@ -20,6 +22,8 @@ type Services struct {
 	Inquiry   *inquirysvc.InquiryService
 	Quotation *quotationsvc.QuotationService
 	User      *usersvc.UserService
+	Payment   *paymentsvc.PaymentService
+	Document  *documentsvc.DocumentService
 	JWTSecret string
 }
 
@@ -36,6 +40,8 @@ func RegisterRoutes(e *echo.Echo, svc Services) {
 	quotationH := NewQuotationHandler(svc.Quotation)
 	userH := NewUserHandler(svc.User)
 	dashH := NewDashboardHandler()
+	paymentH := NewPaymentHandler(svc.Payment)
+	documentH := NewDocumentHandler(svc.Document)
 
 	api := e.Group("/api/v1")
 
@@ -85,6 +91,7 @@ func RegisterRoutes(e *echo.Echo, svc Services) {
 	admin.GET("/quotations", quotationH.ListQuotations)
 	admin.GET("/quotations/:id", quotationH.GetQuotation)
 	admin.GET("/quotations/:id/print", quotationH.PrintQuotation)
+	admin.PATCH("/quotations/:id/status", quotationH.UpdateQuotationStatus)
 
 	// Bookings / Manifest
 	admin.GET("/bookings", bookingH.ListBookings)
@@ -92,5 +99,21 @@ func RegisterRoutes(e *echo.Echo, svc Services) {
 	admin.POST("/bookings", bookingH.CreateBooking)
 	admin.PATCH("/bookings/:id/payment-status", bookingH.UpdatePaymentStatus)
 	admin.PATCH("/bookings/:id/booking-status", bookingH.UpdateBookingStatus)
+	admin.PATCH("/bookings/:id/leader", bookingH.SetTourLeader)
+	admin.PATCH("/bookings/:id/wa-group", bookingH.SetWAGroup)
+	admin.PATCH("/bookings/:id/briefing", bookingH.SetBriefingDone)
 	admin.DELETE("/bookings/:id", bookingH.DeleteBooking)
+
+	// Payments
+	admin.GET("/bookings/:id/payments", paymentH.ListPayments)
+	admin.POST("/bookings/:id/payments", paymentH.CreatePayment)
+	admin.PATCH("/payments/:pid/verify", paymentH.VerifyPayment)
+	admin.DELETE("/payments/:pid", paymentH.DeletePayment)
+
+	// Participant Documents
+	admin.GET("/bookings/:id/documents", documentH.ListDocumentsByBooking)
+	admin.GET("/participants/:pid/documents", documentH.ListDocumentsByParticipant)
+	admin.POST("/participants/:pid/documents", documentH.CreateDocument)
+	admin.PATCH("/documents/:did/verify", documentH.VerifyDocument)
+	admin.DELETE("/documents/:did", documentH.DeleteDocument)
 }

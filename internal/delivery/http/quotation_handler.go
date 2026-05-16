@@ -149,6 +149,38 @@ func (h *QuotationHandler) GetQuotation(c echo.Context) error {
 	return c.JSON(http.StatusOK, detail)
 }
 
+// UpdateQuotationStatus godoc
+//
+//	@Summary     Update quotation status (admin)
+//	@Tags        quotations
+//	@Accept      json
+//	@Produce     json
+//	@Security    BearerAuth
+//	@Param       id   path string true "Quotation ID"
+//	@Param       body body map[string]string true "Status payload"
+//	@Success     200 {object} map[string]interface{}
+//	@Router      /api/v1/admin/quotations/{id}/status [patch]
+func (h *QuotationHandler) UpdateQuotationStatus(c echo.Context) error {
+	id := c.Param("id")
+
+	var body struct {
+		Status string `json:"status"`
+	}
+	if err := c.Bind(&body); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+
+	valid := map[string]bool{"draft": true, "sent": true, "accepted": true, "rejected": true, "expired": true}
+	if !valid[body.Status] {
+		return echo.NewHTTPError(http.StatusBadRequest, "status must be one of: draft, sent, accepted, rejected, expired")
+	}
+
+	if err := h.svc.UpdateStatus(c.Request().Context(), id, body.Status); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to update status")
+	}
+	return c.JSON(http.StatusOK, map[string]interface{}{"id": id, "status": body.Status})
+}
+
 // PrintQuotation godoc
 //
 //	@Summary     Print-friendly HTML quotation

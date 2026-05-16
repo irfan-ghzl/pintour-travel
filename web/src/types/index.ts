@@ -179,6 +179,9 @@ export interface Booking {
   booking_status: string
   notes?: string
   participants?: BookingParticipant[]
+  tour_leader_id?: string
+  wa_group_link?: string
+  briefing_done?: boolean
   created_at: string
 }
 
@@ -187,5 +190,34 @@ export interface BookingsResponse {
   total: number
   page: number
   per_page: number
+}
+
+// ─── Payments ─────────────────────────────────────────────────────────────────
+
+export interface Payment {
+  id: string
+  booking_id: string
+  payment_type: string
+  amount: number
+  paid_at: string
+  proof_url?: string
+  notes?: string
+  verified_by?: string
+  verified_at?: string
+  created_at: string
+}
+
+// ─── Participant Documents ─────────────────────────────────────────────────────
+
+export interface ParticipantDocument {
+  id: string
+  participant_id: string
+  doc_type: string
+  file_url: string
+  notes?: string
+  verified: boolean
+  verified_by?: string
+  verified_at?: string
+  uploaded_at: string
 }
 

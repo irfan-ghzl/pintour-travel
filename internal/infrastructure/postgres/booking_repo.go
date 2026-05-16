@@ -43,7 +43,8 @@ func (r *BookingRepo) List(ctx context.Context, f booking.Filter) ([]booking.Boo
 		SELECT b.id, b.booking_code, b.customer_name, b.customer_email, b.customer_phone,
 		       b.departure_date, b.num_people, b.total_price,
 		       b.payment_status, b.booking_status, b.notes, b.created_at,
-		       tp.title AS package_title
+		       tp.title AS package_title,
+		       b.tour_leader_id, b.wa_group_link, b.briefing_done
 		FROM bookings b
 		LEFT JOIN tour_packages tp ON tp.id = b.tour_package_id
 		WHERE %s
@@ -63,6 +64,7 @@ func (r *BookingRepo) List(ctx context.Context, f booking.Filter) ([]booking.Boo
 			&b.ID, &b.BookingCode, &b.CustomerName, &b.CustomerEmail, &b.CustomerPhone,
 			&b.DepartureDate, &b.NumPeople, &b.TotalPrice,
 			&b.PaymentStatus, &b.BookingStatus, &b.Notes, &b.CreatedAt, &b.PackageTitle,
+			&b.TourLeaderID, &b.WAGroupLink, &b.BriefingDone,
 		); err != nil {
 			continue
 		}
@@ -84,7 +86,8 @@ func (r *BookingRepo) GetByID(ctx context.Context, id string) (*booking.Detail, 
 		SELECT b.id, b.booking_code, b.customer_name, b.customer_email, b.customer_phone,
 		       b.departure_date, b.num_people, b.total_price,
 		       b.payment_status, b.booking_status, b.notes, b.created_at,
-		       tp.title AS package_title, tp.id AS package_id
+		       tp.title AS package_title, tp.id AS package_id,
+		       b.tour_leader_id, b.wa_group_link, b.briefing_done
 		FROM bookings b
 		LEFT JOIN tour_packages tp ON tp.id = b.tour_package_id
 		WHERE b.id = $1`, id)
@@ -95,6 +98,7 @@ func (r *BookingRepo) GetByID(ctx context.Context, id string) (*booking.Detail, 
 		&b.ID, &b.BookingCode, &b.CustomerName, &b.CustomerEmail, &b.CustomerPhone,
 		&b.DepartureDate, &b.NumPeople, &b.TotalPrice,
 		&b.PaymentStatus, &b.BookingStatus, &b.Notes, &b.CreatedAt, &pkgTitle, &pkgID,
+		&b.TourLeaderID, &b.WAGroupLink, &b.BriefingDone,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -203,6 +207,24 @@ func (r *BookingRepo) UpdateBookingStatus(ctx context.Context, id, status string
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+func (r *BookingRepo) SetTourLeader(ctx context.Context, id, leaderID string) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE bookings SET tour_leader_id=$2, updated_at=NOW() WHERE id=$1`, id, leaderID)
+	return err
+}
+
+func (r *BookingRepo) SetWAGroup(ctx context.Context, id, link string) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE bookings SET wa_group_link=$2, updated_at=NOW() WHERE id=$1`, id, link)
+	return err
+}
+
+func (r *BookingRepo) SetBriefingDone(ctx context.Context, id string, done bool) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE bookings SET briefing_done=$2, updated_at=NOW() WHERE id=$1`, id, done)
+	return err
 }
 
 func (r *BookingRepo) Delete(ctx context.Context, id string) error {

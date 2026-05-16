@@ -17,6 +17,9 @@ type Booking struct {
 	Notes         *string `json:"notes,omitempty"`
 	CreatedAt     string  `json:"created_at"`
 	PackageTitle  *string `json:"package_title,omitempty"`
+	TourLeaderID  *string `json:"tour_leader_id,omitempty"`
+	WAGroupLink   *string `json:"wa_group_link,omitempty"`
+	BriefingDone  bool    `json:"briefing_done"`
 }
 
 // Participant is a traveller listed on a booking manifest.
