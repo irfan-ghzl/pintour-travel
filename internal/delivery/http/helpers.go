@@ -1,12 +1,71 @@
 package httpdelivery
 
 import (
+	"net/http"
 	"strconv"
 
+	"github.com/irfan-ghzl/pintour-travel/internal/auth"
 	"github.com/labstack/echo/v4"
 )
 
-// queryInt reads an integer query parameter with a fallback default value.
+// ─── Response wrappers ────────────────────────────────────────────────────────
+
+func ok(data interface{}) map[string]interface{} {
+	return map[string]interface{}{"success": true, "data": data}
+}
+
+func pageResponse(data interface{}, total, page, perPage int) map[string]interface{} {
+	totalPages := (total + perPage - 1) / perPage
+	return map[string]interface{}{
+		"success": true,
+		"data":    data,
+		"meta": map[string]int{
+			"page":        page,
+			"limit":       perPage,
+			"total":       total,
+			"total_pages": totalPages,
+		},
+	}
+}
+
+func errResponse(code, message string) map[string]interface{} {
+	return map[string]interface{}{"success": false, "error": code, "message": message}
+}
+
+func badRequest(c echo.Context, message string) error {
+	return c.JSON(http.StatusBadRequest, errResponse("BAD_REQUEST", message))
+}
+
+func notFound(c echo.Context, message string) error {
+	return c.JSON(http.StatusNotFound, errResponse("NOT_FOUND", message))
+}
+
+func serverErr(c echo.Context, err error) error {
+	return c.JSON(http.StatusInternalServerError, errResponse("SERVER_ERROR", err.Error()))
+}
+
+func forbidden(c echo.Context) error {
+	return c.JSON(http.StatusForbidden, errResponse("FORBIDDEN", "Akses tidak diizinkan"))
+}
+
+// ─── JWT claim helpers ────────────────────────────────────────────────────────
+
+func claimUserID(c echo.Context) string {
+	if claims, ok := c.Get("claims").(*auth.Claims); ok {
+		return claims.UserID
+	}
+	return ""
+}
+
+func claimRole(c echo.Context) string {
+	if claims, ok := c.Get("claims").(*auth.Claims); ok {
+		return claims.Role
+	}
+	return ""
+}
+
+// ─── Query helpers ────────────────────────────────────────────────────────────
+
 func queryInt(c echo.Context, name string, defaultVal int) int {
 	s := c.QueryParam(name)
 	if s == "" {
@@ -19,7 +78,6 @@ func queryInt(c echo.Context, name string, defaultVal int) int {
 	return v
 }
 
-// queryStringPtr returns nil if the query param is empty, otherwise a pointer to its value.
 func queryStringPtr(c echo.Context, name string) *string {
 	v := c.QueryParam(name)
 	if v == "" {
@@ -28,7 +86,6 @@ func queryStringPtr(c echo.Context, name string) *string {
 	return &v
 }
 
-// queryFloat64Ptr parses a float64 query param; returns nil if absent or invalid.
 func queryFloat64Ptr(c echo.Context, name string) *float64 {
 	s := c.QueryParam(name)
 	if s == "" {
@@ -41,7 +98,6 @@ func queryFloat64Ptr(c echo.Context, name string) *float64 {
 	return &v
 }
 
-// queryIntPtr parses an integer query param; returns nil if absent or invalid.
 func queryIntPtr(c echo.Context, name string) *int {
 	s := c.QueryParam(name)
 	if s == "" {

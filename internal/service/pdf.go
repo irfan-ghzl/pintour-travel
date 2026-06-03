@@ -1,0 +1,370 @@
+package service
+
+import (
+	"bytes"
+	"fmt"
+	"time"
+
+	"github.com/jung-kurt/gofpdf"
+)
+
+// PDFService generates PDF documents.
+type PDFService struct{}
+
+func NewPDFService() *PDFService { return &PDFService{} }
+
+// InvoiceData holds all data needed to render an invoice PDF.
+type InvoiceData struct {
+	InvoiceNumber   string
+	IssuedAt        time.Time
+	DueDate         time.Time
+	ParticipantName string
+	ParticipantPhone string
+	PackageName     string
+	BatchDate       string
+	RoomType        string
+	Amount          float64
+	Notes           string
+	IssuedByName    string
+}
+
+// GenerateInvoice creates an invoice PDF and returns the bytes.
+func (s *PDFService) GenerateInvoice(d InvoiceData) ([]byte, error) {
+	pdf := gofpdf.New("P", "mm", "A4", "")
+	pdf.SetMargins(20, 20, 20)
+	pdf.AddPage()
+
+	// Header
+	pdf.SetFillColor(16, 100, 59) // emerald-700
+	pdf.Rect(0, 0, 210, 40, "F")
+	pdf.SetTextColor(255, 255, 255)
+	pdf.SetFont("Helvetica", "B", 22)
+	pdf.SetXY(20, 10)
+	pdf.Cell(0, 10, "PINTOUR TRAVEL")
+	pdf.SetFont("Helvetica", "", 10)
+	pdf.SetXY(20, 22)
+	pdf.Cell(0, 8, "Agen Perjalanan Wisata & Umroh Terpercaya")
+
+	// Invoice badge
+	pdf.SetFillColor(255, 255, 255)
+	pdf.RoundedRect(140, 10, 50, 20, 3, "1234", "F")
+	pdf.SetTextColor(16, 100, 59)
+	pdf.SetFont("Helvetica", "B", 9)
+	pdf.SetXY(143, 14)
+	pdf.Cell(44, 5, "INVOICE")
+	pdf.SetFont("Helvetica", "B", 11)
+	pdf.SetXY(143, 20)
+	pdf.Cell(44, 6, d.InvoiceNumber)
+
+	// Reset colors
+	pdf.SetTextColor(30, 30, 30)
+	pdf.SetY(50)
+
+	// Invoice meta
+	pdf.SetFont("Helvetica", "", 9)
+	pdf.SetTextColor(100, 100, 100)
+	pdf.CellFormat(95, 5, fmt.Sprintf("Tanggal Terbit: %s", d.IssuedAt.Format("02 January 2006")), "", 0, "L", false, 0, "")
+	pdf.CellFormat(95, 5, fmt.Sprintf("Jatuh Tempo: %s", d.DueDate.Format("02 January 2006")), "", 1, "L", false, 0, "")
+	pdf.Ln(5)
+
+	// Divider
+	pdf.SetDrawColor(200, 200, 200)
+	pdf.Line(20, pdf.GetY(), 190, pdf.GetY())
+	pdf.Ln(6)
+
+	// Tagihan kepada
+	pdf.SetFont("Helvetica", "B", 10)
+	pdf.SetTextColor(30, 30, 30)
+	pdf.Cell(0, 6, "Tagihan Kepada:")
+	pdf.Ln(5)
+	pdf.SetFont("Helvetica", "B", 12)
+	pdf.Cell(0, 7, d.ParticipantName)
+	pdf.Ln(5)
+	pdf.SetFont("Helvetica", "", 10)
+	pdf.SetTextColor(80, 80, 80)
+	pdf.Cell(0, 5, fmt.Sprintf("WhatsApp: %s", d.ParticipantPhone))
+	pdf.Ln(10)
+
+	// Detail tabel
+	pdf.SetFillColor(240, 253, 244)
+	pdf.SetDrawColor(200, 200, 200)
+	pdf.SetFont("Helvetica", "B", 9)
+	pdf.SetTextColor(30, 30, 30)
+	pdf.CellFormat(10, 8, "#", "1", 0, "C", true, 0, "")
+	pdf.CellFormat(100, 8, "Keterangan", "1", 0, "L", true, 0, "")
+	pdf.CellFormat(80, 8, "Nilai", "1", 1, "R", true, 0, "")
+
+	items := []struct{ desc, val string }{
+		{"Paket Wisata", d.PackageName},
+		{"Tanggal Keberangkatan", d.BatchDate},
+		{"Tipe Kamar", titelize(d.RoomType)},
+	}
+
+	pdf.SetFont("Helvetica", "", 9)
+	pdf.SetFillColor(255, 255, 255)
+	for i, item := range items {
+		fill := i%2 == 1
+		if fill {
+			pdf.SetFillColor(248, 248, 248)
+		} else {
+			pdf.SetFillColor(255, 255, 255)
+		}
+		pdf.CellFormat(10, 7, fmt.Sprintf("%d", i+1), "1", 0, "C", fill, 0, "")
+		pdf.CellFormat(100, 7, item.desc, "1", 0, "L", fill, 0, "")
+		pdf.CellFormat(80, 7, item.val, "1", 1, "R", fill, 0, "")
+	}
+	pdf.Ln(4)
+
+	// Total
+	pdf.SetFillColor(16, 100, 59)
+	pdf.SetTextColor(255, 255, 255)
+	pdf.SetFont("Helvetica", "B", 11)
+	pdf.CellFormat(110, 10, "TOTAL TAGIHAN", "0", 0, "R", true, 0, "")
+	pdf.CellFormat(80, 10, fmt.Sprintf("Rp %s", formatRupiah(d.Amount)), "0", 1, "R", true, 0, "")
+	pdf.SetTextColor(30, 30, 30)
+	pdf.Ln(8)
+
+	// Notes
+	if d.Notes != "" {
+		pdf.SetFont("Helvetica", "I", 9)
+		pdf.SetTextColor(100, 100, 100)
+		pdf.Cell(0, 5, fmt.Sprintf("Catatan: %s", d.Notes))
+		pdf.Ln(8)
+	}
+
+	// Payment info
+	pdf.SetFillColor(254, 252, 232)
+	pdf.SetDrawColor(202, 138, 4)
+	pdf.RoundedRect(20, pdf.GetY(), 170, 30, 3, "1234", "FD")
+	pdf.SetFont("Helvetica", "B", 10)
+	pdf.SetTextColor(120, 70, 0)
+	pdf.SetXY(25, pdf.GetY()+4)
+	pdf.Cell(0, 6, "Cara Pembayaran")
+	pdf.SetFont("Helvetica", "", 9)
+	pdf.SetTextColor(100, 80, 0)
+	pdf.SetXY(25, pdf.GetY()+6)
+	pdf.Cell(0, 5, "Transfer ke rekening yang diberikan tim Pintour, kemudian upload bukti transfer")
+	pdf.SetXY(25, pdf.GetY()+5)
+	pdf.Cell(0, 5, "melalui Portal Peserta. Admin akan mengkonfirmasi dalam 1x24 jam.")
+	pdf.Ln(35)
+
+	// Footer
+	pdf.SetFillColor(16, 100, 59)
+	pdf.Rect(0, 277, 210, 20, "F")
+	pdf.SetTextColor(255, 255, 255)
+	pdf.SetFont("Helvetica", "", 8)
+	pdf.SetXY(20, 281)
+	pdf.Cell(0, 5, fmt.Sprintf("Diterbitkan oleh: %s  |  %s  |  pintour.app", d.IssuedByName, d.IssuedAt.Format("02 Jan 2006 15:04")))
+
+	var buf bytes.Buffer
+	if err := pdf.Output(&buf); err != nil {
+		return nil, fmt.Errorf("generate invoice PDF: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+// BriefingData holds data for briefing PDF generation.
+type BriefingData struct {
+	ParticipantName string
+	PackageName     string
+	DepartureDate   string
+	TourLeaderName  string
+	TourLeaderPhone string
+	TourLeaderBio   string
+}
+
+// GenerateBriefing creates a briefing PDF.
+func (s *PDFService) GenerateBriefing(d BriefingData) ([]byte, error) {
+	pdf := gofpdf.New("P", "mm", "A4", "")
+	pdf.SetMargins(20, 20, 20)
+	pdf.AddPage()
+
+	// Header
+	pdf.SetFillColor(16, 100, 59)
+	pdf.Rect(0, 0, 210, 35, "F")
+	pdf.SetTextColor(255, 255, 255)
+	pdf.SetFont("Helvetica", "B", 18)
+	pdf.SetXY(20, 8)
+	pdf.Cell(0, 10, "MATERI BRIEFING PERJALANAN")
+	pdf.SetFont("Helvetica", "", 10)
+	pdf.SetXY(20, 22)
+	pdf.Cell(0, 7, fmt.Sprintf("%s  ·  Keberangkatan %s", d.PackageName, d.DepartureDate))
+
+	pdf.SetTextColor(30, 30, 30)
+	pdf.SetY(45)
+
+	pdf.SetFont("Helvetica", "", 9)
+	pdf.SetTextColor(80, 80, 80)
+	pdf.Cell(0, 5, fmt.Sprintf("Kepada Yth. Bapak/Ibu %s", d.ParticipantName))
+	pdf.Ln(10)
+
+	sections := []struct{ title, body string }{
+		{"Tour Leader Anda", fmt.Sprintf("Nama: %s\nKontak Darurat: %s\n%s", d.TourLeaderName, d.TourLeaderPhone, d.TourLeaderBio)},
+		{"Tata Tertib Perjalanan", "1. Hadir di titik kumpul 3 jam sebelum jadwal penerbangan\n2. Bawa paspor asli dan semua dokumen perjalanan\n3. Batasan bagasi: 20kg check-in + 7kg kabin\n4. Patuhi jadwal dan arahan tour leader\n5. Hormati budaya dan adat setempat\n6. Tidak meninggalkan grup tanpa izin tour leader"},
+		{"Barang Bawaan Disarankan", "• Pakaian sesuai cuaca tujuan\n• Obat-obatan pribadi\n• Kartu debit/kredit internasional\n• Adaptor universal & powerbank\n• Uang tunai secukupnya\n• Dokumen perjalanan (fotokopi)\n• Kamera/HP + charger"},
+		{"Panduan Keimigrasian", "• Antri di jalur WNA saat tiba di luar negeri\n• Isi formulir imigrasi sebelum mendarat\n• Ikuti arahan tour leader untuk custom clearance\n• Simpan boarding pass hingga tiba di tujuan"},
+		{"Kontak Darurat", fmt.Sprintf("Tour Leader: %s (%s)\nKantor Pintour: +62 (hubungi admin)\nHotline 24 jam tersedia selama perjalanan", d.TourLeaderName, d.TourLeaderPhone)},
+	}
+
+	for _, sec := range sections {
+		pdf.SetFillColor(240, 253, 244)
+		pdf.SetFont("Helvetica", "B", 10)
+		pdf.SetTextColor(16, 100, 59)
+		pdf.CellFormat(170, 7, "  "+sec.title, "LTR", 1, "L", true, 0, "")
+		pdf.SetFillColor(250, 250, 250)
+		pdf.SetFont("Helvetica", "", 9)
+		pdf.SetTextColor(50, 50, 50)
+		pdf.MultiCell(170, 5, sec.body, "LBR", "L", true)
+		pdf.Ln(4)
+	}
+
+	// Footer
+	pdf.SetFillColor(16, 100, 59)
+	pdf.Rect(0, 277, 210, 20, "F")
+	pdf.SetTextColor(255, 255, 255)
+	pdf.SetFont("Helvetica", "", 8)
+	pdf.SetXY(20, 281)
+	pdf.Cell(0, 5, "Dokumen ini bersifat rahasia dan hanya untuk peserta terdaftar. © Pintour Travel")
+
+	var buf bytes.Buffer
+	if err := pdf.Output(&buf); err != nil {
+		return nil, fmt.Errorf("generate briefing PDF: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+// AirportReportData holds data for airport handling post-report (FR-AIR-06).
+type AirportReportData struct {
+	BatchName      string
+	DepartureDate  string
+	TourLeaderName string
+	TotalPax       int
+	DoneCount      int
+	PendingCount   int
+	StartedAt      *time.Time // jam handling mulai (timestamp checklist pertama)
+	FinishedAt     *time.Time // jam handling selesai (timestamp checklist terakhir)
+	GeneratedAt    time.Time
+	Rows           []AirportRow
+}
+
+type AirportRow struct {
+	ParticipantName string
+	BaggageAt       string
+	TicketAt        string
+	PassportAt      string
+}
+
+// GenerateAirportReport creates post-handling report PDF (FR-AIR-06).
+func (s *PDFService) GenerateAirportReport(d AirportReportData) ([]byte, error) {
+	pdf := gofpdf.New("P", "mm", "A4", "")
+	pdf.SetMargins(15, 15, 15)
+	pdf.AddPage()
+
+	// Header
+	pdf.SetFillColor(16, 100, 59)
+	pdf.Rect(0, 0, 210, 35, "F")
+	pdf.SetTextColor(255, 255, 255)
+	pdf.SetFont("Helvetica", "B", 18)
+	pdf.SetXY(15, 8)
+	pdf.Cell(0, 10, "LAPORAN AIRPORT HANDLING")
+	pdf.SetFont("Helvetica", "", 10)
+	pdf.SetXY(15, 22)
+	pdf.Cell(0, 6, fmt.Sprintf("Batch: %s · %s", d.BatchName, d.DepartureDate))
+
+	pdf.SetTextColor(30, 30, 30)
+	pdf.SetY(45)
+
+	// Summary
+	pdf.SetFont("Helvetica", "B", 11)
+	pdf.Cell(0, 6, "Ringkasan")
+	pdf.Ln(7)
+	pdf.SetFont("Helvetica", "", 10)
+	pdf.SetTextColor(80, 80, 80)
+	pdf.Cell(50, 5, "Total Peserta")
+	pdf.Cell(0, 5, fmt.Sprintf(": %d orang", d.TotalPax))
+	pdf.Ln(5)
+	pdf.Cell(50, 5, "Selesai Diproses")
+	pdf.Cell(0, 5, fmt.Sprintf(": %d orang", d.DoneCount))
+	pdf.Ln(5)
+	pdf.Cell(50, 5, "Menunggu")
+	pdf.Cell(0, 5, fmt.Sprintf(": %d orang", d.PendingCount))
+	pdf.Ln(5)
+	pdf.Cell(50, 5, "Tour Leader Bertugas")
+	pdf.Cell(0, 5, fmt.Sprintf(": %s", d.TourLeaderName))
+	pdf.Ln(5)
+	// AC-AIR-02: jam mulai & selesai handling
+	startedStr := "—"
+	if d.StartedAt != nil {
+		startedStr = d.StartedAt.Format("15:04")
+	}
+	finishedStr := "—"
+	if d.FinishedAt != nil {
+		finishedStr = d.FinishedAt.Format("15:04")
+	}
+	pdf.Cell(50, 5, "Mulai Handling")
+	pdf.Cell(0, 5, fmt.Sprintf(": %s", startedStr))
+	pdf.Ln(5)
+	pdf.Cell(50, 5, "Selesai Handling")
+	pdf.Cell(0, 5, fmt.Sprintf(": %s", finishedStr))
+	pdf.Ln(5)
+	pdf.Cell(50, 5, "Laporan Dibuat")
+	pdf.Cell(0, 5, fmt.Sprintf(": %s", d.GeneratedAt.Format("02 Jan 2006 15:04")))
+	pdf.Ln(10)
+
+	// Table header
+	pdf.SetFillColor(240, 253, 244)
+	pdf.SetTextColor(30, 30, 30)
+	pdf.SetFont("Helvetica", "B", 9)
+	pdf.CellFormat(8, 7, "#", "1", 0, "C", true, 0, "")
+	pdf.CellFormat(70, 7, "Nama Peserta", "1", 0, "L", true, 0, "")
+	pdf.CellFormat(33, 7, "Bagasi", "1", 0, "C", true, 0, "")
+	pdf.CellFormat(33, 7, "Tiket", "1", 0, "C", true, 0, "")
+	pdf.CellFormat(36, 7, "Paspor", "1", 1, "C", true, 0, "")
+
+	pdf.SetFont("Helvetica", "", 8)
+	for i, row := range d.Rows {
+		fill := i%2 == 1
+		if fill {
+			pdf.SetFillColor(248, 248, 248)
+		} else {
+			pdf.SetFillColor(255, 255, 255)
+		}
+		pdf.CellFormat(8, 6, fmt.Sprintf("%d", i+1), "1", 0, "C", fill, 0, "")
+		pdf.CellFormat(70, 6, row.ParticipantName, "1", 0, "L", fill, 0, "")
+		pdf.CellFormat(33, 6, row.BaggageAt, "1", 0, "C", fill, 0, "")
+		pdf.CellFormat(33, 6, row.TicketAt, "1", 0, "C", fill, 0, "")
+		pdf.CellFormat(36, 6, row.PassportAt, "1", 1, "C", fill, 0, "")
+	}
+
+	// Footer
+	pdf.SetY(-20)
+	pdf.SetFont("Helvetica", "I", 8)
+	pdf.SetTextColor(120, 120, 120)
+	pdf.Cell(0, 5, "Laporan ini dihasilkan otomatis oleh sistem Pintour. © Pintour Travel")
+
+	var buf bytes.Buffer
+	if err := pdf.Output(&buf); err != nil {
+		return nil, fmt.Errorf("generate airport report PDF: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+func formatRupiah(amount float64) string {
+	s := fmt.Sprintf("%.0f", amount)
+	n := len(s)
+	result := make([]byte, 0, n+n/3)
+	for i, c := range s {
+		if i > 0 && (n-i)%3 == 0 {
+			result = append(result, '.')
+		}
+		result = append(result, byte(c))
+	}
+	return string(result)
+}
+
+func titelize(s string) string {
+	if len(s) == 0 {
+		return s
+	}
+	return string(s[0]-32) + s[1:]
+}

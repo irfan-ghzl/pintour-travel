@@ -1,5 +1,6 @@
 # ── Stage 1: Build Go binary ──────────────────────────────────────────────────
-FROM golang:1.24-alpine AS go-builder
+# PRD §18: Go 1.22+. Kita pakai 1.25 karena dependency baru (pgx/v5, gocron v2) butuh ≥1.25
+FROM golang:1.25-alpine AS go-builder
 
 WORKDIR /app
 

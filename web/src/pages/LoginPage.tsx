@@ -1,69 +1,85 @@
-import { useForm } from 'react-hook-form'
+import { useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { useMutation } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
 import { MapPin } from 'lucide-react'
 import api from '../utils/api'
 import { authStorage } from '../utils/auth'
-import { LoginRequest, LoginResponse } from '../types'
+import type { LoginRequest, LoginResponse } from '../types'
 
 export default function LoginPage() {
   const navigate = useNavigate()
-  const { register, handleSubmit, formState: { errors } } = useForm<LoginRequest>()
+  const [form, setForm] = useState<LoginRequest>({ email: '', password: '' })
+  const [error, setError] = useState('')
 
-  const mutation = useMutation<LoginResponse, Error, LoginRequest>({
-    mutationFn: (data) => api.post('/auth/login', data).then((r) => r.data),
-    onSuccess: (data) => {
-      authStorage.setSession(data)
+  const mutation = useMutation<{ data: LoginResponse }, Error, LoginRequest>({
+    mutationFn: (data) => api.post('/auth/login', data),
+    onSuccess: (res) => {
+      authStorage.setSession(res.data)
       navigate('/admin')
     },
+    onError: () => setError('Email atau password salah.'),
   })
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary-800 to-primary-600 flex items-center justify-center px-4">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl p-8">
-        <div className="flex items-center gap-2 mb-8">
-          <MapPin className="w-7 h-7 text-accent-500" />
-          <span className="text-xl font-bold text-primary-700">Pintour Admin</span>
+    <div className="min-h-screen bg-emerald-800 flex items-center justify-center px-4">
+      <div className="w-full max-w-sm bg-white rounded-2xl shadow-2xl p-8">
+        <div className="text-center mb-8">
+          <div className="w-12 h-12 bg-emerald-700 rounded-xl flex items-center justify-center mx-auto mb-3">
+            <MapPin className="text-white" size={24} />
+          </div>
+          <h1 className="text-xl font-bold text-gray-800">Pintour Admin</h1>
+          <p className="text-sm text-gray-500 mt-1">Masukkan kredensial untuk mengakses dashboard</p>
         </div>
 
-        <h1 className="text-2xl font-bold text-gray-900 mb-1">Masuk</h1>
-        <p className="text-gray-500 text-sm mb-8">Masukkan kredensial Anda untuk mengakses dashboard.</p>
-
-        <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-5">
+        <form
+          onSubmit={(e) => { e.preventDefault(); setError(''); mutation.mutate(form) }}
+          className="space-y-4"
+        >
           <div>
-            <label className="label">Email</label>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Email</label>
             <input
-              {...register('email', { required: 'Email wajib diisi' })}
+              required
               type="email"
-              className="input"
-              placeholder="admin@pintour.com"
+              placeholder="admin@pintour.app"
+              className="w-full border rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+              value={form.email}
+              onChange={(e) => setForm({ ...form, email: e.target.value })}
             />
-            {errors.email && <p className="text-red-500 text-xs mt-1">{errors.email.message}</p>}
           </div>
-
           <div>
-            <label className="label">Password</label>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Password</label>
             <input
-              {...register('password', { required: 'Password wajib diisi' })}
+              required
               type="password"
-              className="input"
               placeholder="••••••••"
+              className="w-full border rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+              value={form.password}
+              onChange={(e) => setForm({ ...form, password: e.target.value })}
             />
-            {errors.password && <p className="text-red-500 text-xs mt-1">{errors.password.message}</p>}
           </div>
 
-          {mutation.isError && (
-            <p className="text-red-500 text-sm">Email atau password salah.</p>
+          {error && (
+            <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>
           )}
 
           <button
             type="submit"
             disabled={mutation.isPending}
-            className="btn-primary w-full justify-center py-3"
+            className="w-full py-2.5 bg-emerald-600 text-white rounded-lg font-semibold text-sm hover:bg-emerald-700 transition-colors disabled:opacity-50"
           >
             {mutation.isPending ? 'Masuk...' : 'Masuk ke Dashboard'}
           </button>
         </form>
+
+        {/* §15.4 auth-forgot-password link */}
+        <div className="text-center mt-5">
+          <Link
+            to="/forgot-password"
+            className="text-sm text-emerald-600 hover:underline"
+          >
+            Lupa password?
+          </Link>
+        </div>
       </div>
     </div>
   )

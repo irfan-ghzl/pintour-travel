@@ -1,0 +1,1098 @@
+basePath: /api/v1
+definitions:
+  github_com_irfan-ghzl_pintour-travel_internal_domain_package.Package:
+    properties:
+      basePrice:
+        format: float64
+        type: number
+      category:
+        description: reguler, umroh, halal, honeymoon
+        type: string
+      createdAt:
+        type: string
+      createdBy:
+        type: string
+      deletedAt:
+        description: §13.1 soft delete
+        type: string
+      description:
+        type: string
+      destination:
+        type: string
+      durationDays:
+        type: integer
+      facilities:
+        description: '[]string — FR-CAT-03 "fasilitas yang disertakan"'
+        items:
+          format: int32
+          type: integer
+        type: array
+      id:
+        type: string
+      isActive:
+        type: boolean
+      itinerary:
+        description: '[]ItineraryDay'
+        items:
+          format: int32
+          type: integer
+        type: array
+      name:
+        type: string
+      requirements:
+        description: '[]string'
+        items:
+          format: int32
+          type: integer
+        type: array
+      slug:
+        type: string
+      termsConditions:
+        description: FR-CAT-03 "syarat & ketentuan"
+        type: string
+      thumbnail:
+        type: string
+      updatedAt:
+        type: string
+      visaInfo:
+        description: FR-CAT-03 "informasi visa"
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: REST API untuk sistem E-Catalog Tour & Travel dengan WhatsApp Gateway
+  title: Pintour E-Catalog API
+  version: "2.0"
+paths:
+  /admin/airport/checklist:
+    get:
+      parameters:
+      - description: Batch ID
+        in: query
+        name: batch_id
+        required: true
+        type: string
+      - description: Filter status (pending/done)
+        in: query
+        name: status
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Daftar checklist airport per batch
+      tags:
+      - airport
+  /admin/airport/confirm-departure:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Kirim WA konfirmasi keberangkatan ke semua peserta batch (FR-AUTO-08)
+      tags:
+      - airport
+  /admin/airport/participants/{participant_id}/baggage:
+    patch:
+      parameters:
+      - description: Participant ID
+        in: path
+        name: participant_id
+        required: true
+        type: string
+      - description: Batch ID
+        in: query
+        name: batch_id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Tandai bagasi peserta sudah dicheck (FR-AIR-02)
+      tags:
+      - airport
+  /admin/airport/participants/{participant_id}/passport:
+    patch:
+      parameters:
+      - description: Participant ID
+        in: path
+        name: participant_id
+        required: true
+        type: string
+      - description: Batch ID
+        in: query
+        name: batch_id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Tandai paspor peserta sudah dikembalikan (FR-AIR-02/03)
+      tags:
+      - airport
+  /admin/airport/participants/{participant_id}/ticket:
+    patch:
+      parameters:
+      - description: Participant ID
+        in: path
+        name: participant_id
+        required: true
+        type: string
+      - description: Batch ID
+        in: query
+        name: batch_id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Tandai tiket peserta sudah didistribusikan (FR-AIR-02)
+      tags:
+      - airport
+  /admin/airport/report/pdf:
+    get:
+      parameters:
+      - description: Batch ID
+        in: query
+        name: batch_id
+        required: true
+        type: string
+      produces:
+      - application/pdf
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+      security:
+      - BearerAuth: []
+      summary: Laporan post-handling sebagai PDF (FR-AIR-06)
+      tags:
+      - airport
+  /admin/country-requirements:
+    post:
+      consumes:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Tambah persyaratan dokumen baru per negara (admin) (US-ADM-07)
+      tags:
+      - country-requirements
+  /admin/documents/{id}/review:
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Setujui/tolak dokumen + kirim WA DOC_REJECTED (FR-PORTAL-05)
+      tags:
+      - documents
+  /admin/invoices:
+    get:
+      parameters:
+      - description: Filter status (diterbitkan/menunggu_bayar/dibayar/lunas)
+        in: query
+        name: status
+        type: string
+      - description: Participant ID
+        in: query
+        name: participant_id
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Daftar invoice
+      tags:
+      - invoices
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Terbitkan invoice baru
+      tags:
+      - invoices
+  /admin/invoices/{id}:
+    get:
+      parameters:
+      - description: Invoice ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Detail invoice + payment proofs (AC-INV-02)
+      tags:
+      - invoices
+  /admin/invoices/{id}/confirm:
+    post:
+      parameters:
+      - description: Invoice ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Konfirmasi pembayaran lunas + aktivasi portal peserta
+      tags:
+      - invoices
+  /admin/invoices/{id}/pdf:
+    get:
+      parameters:
+      - description: Invoice ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/pdf
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+      security:
+      - BearerAuth: []
+      summary: Unduh invoice sebagai PDF
+      tags:
+      - invoices
+  /admin/invoices/{id}/proofs:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Invoice ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Upload bukti transfer manual (admin) — alternatif jika peserta tidak
+        bisa
+      tags:
+      - invoices
+  /admin/invoices/{id}/proofs/{proof_id}/review:
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Invoice ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Payment Proof ID
+        in: path
+        name: proof_id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Setujui/tolak bukti transfer (AC-INV-02)
+      tags:
+      - invoices
+  /admin/leads:
+    get:
+      parameters:
+      - description: Filter status
+        in: query
+        name: status
+        type: string
+      - description: Konsultan ID
+        in: query
+        name: assigned_to
+        type: string
+      - description: Paket ID
+        in: query
+        name: package_id
+        type: string
+      - description: Cari nama atau WA
+        in: query
+        name: search
+        type: string
+      - description: Dari tanggal (YYYY-MM-DD)
+        in: query
+        name: date_from
+        type: string
+      - description: Sampai tanggal (YYYY-MM-DD)
+        in: query
+        name: date_to
+        type: string
+      - default: 1
+        description: Halaman
+        in: query
+        name: page
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Daftar leads (admin/konsultan)
+      tags:
+      - leads
+  /admin/leads/{id}:
+    get:
+      parameters:
+      - description: Lead ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Detail lead + activity log + WA log
+      tags:
+      - leads
+  /admin/leads/{id}/assign:
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Lead ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Assign lead ke konsultan (manual)
+      tags:
+      - leads
+  /admin/leads/{id}/notes:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Lead ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Tambah catatan konsultan ke lead (FR-CRM-04)
+      tags:
+      - leads
+  /admin/leads/{id}/status:
+    patch:
+      parameters:
+      - description: Lead ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: '{status: ...}'
+        in: body
+        name: body
+        required: true
+        schema:
+          additionalProperties:
+            type: string
+          type: object
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Ubah status lead (auto-record activity)
+      tags:
+      - leads
+  /admin/packages:
+    get:
+      parameters:
+      - description: Kategori
+        in: query
+        name: category
+        type: string
+      - default: 1
+        description: Halaman
+        in: query
+        name: page
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Daftar paket (admin)
+      tags:
+      - admin-packages
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Data paket
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_irfan-ghzl_pintour-travel_internal_domain_package.Package'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Buat paket baru
+      tags:
+      - admin-packages
+  /admin/packages/{id}:
+    delete:
+      parameters:
+      - description: Package ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Hapus paket (soft delete)
+      tags:
+      - admin-packages
+    put:
+      parameters:
+      - description: Package ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update paket
+      tags:
+      - admin-packages
+  /admin/packages/{package_id}/images/upload:
+    post:
+      consumes:
+      - multipart/form-data
+      parameters:
+      - description: Package ID
+        in: path
+        name: package_id
+        required: true
+        type: string
+      - description: File gambar
+        in: formData
+        name: file
+        required: true
+        type: file
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Upload foto paket ke Supabase public bucket (admin) (§16.2)
+      tags:
+      - upload
+  /admin/participants:
+    get:
+      parameters:
+      - description: Filter batch ID
+        in: query
+        name: batch_id
+        type: string
+      - description: Cari nama/WA
+        in: query
+        name: search
+        type: string
+      - default: 1
+        description: Halaman
+        in: query
+        name: page
+        type: integer
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Daftar peserta (admin)
+      tags:
+      - participants
+  /admin/participants/{id}:
+    get:
+      parameters:
+      - description: Participant ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Detail peserta
+      tags:
+      - participants
+  /admin/participants/{participant_id}/documents:
+    get:
+      parameters:
+      - description: Participant ID
+        in: path
+        name: participant_id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Daftar dokumen per peserta (admin)
+      tags:
+      - documents
+  /admin/participants/convert:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Konversi leads 'deal' menjadi peserta aktif (FR-CRM-06)
+      tags:
+      - participants
+  /admin/tour-leaders:
+    get:
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Daftar profil tour leader (FR-BRIEF-03)
+      tags:
+      - tour-leaders
+  /admin/tour-leaders/{user_id}:
+    get:
+      parameters:
+      - description: User ID
+        in: path
+        name: user_id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get profil tour leader by user_id
+      tags:
+      - tour-leaders
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: User ID
+        in: path
+        name: user_id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create/Update profil tour leader (admin)
+      tags:
+      - tour-leaders
+  /admin/users:
+    get:
+      parameters:
+      - description: Filter role (super_admin/admin/konsultan/tour_leader)
+        in: query
+        name: role
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Daftar pengguna sistem (FR-USER-03)
+      tags:
+      - users
+    post:
+      consumes:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Buat akun pengguna (super_admin only) (FR-USER-03)
+      tags:
+      - users
+  /admin/users/{id}:
+    put:
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Edit data pengguna (super_admin only)
+      tags:
+      - users
+  /admin/users/{id}/deactivate:
+    patch:
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Nonaktifkan akun (soft delete, super_admin only)
+      tags:
+      - users
+  /admin/users/{id}/reset-password:
+    patch:
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Reset password user oleh super admin
+      tags:
+      - users
+  /api/v1/admin/dashboard/stats:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Dashboard statistics (admin)
+      tags:
+      - dashboard
+  /auth/forgot-password:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Kirim link reset password via email Resend (FR-USER-04)
+      tags:
+      - auth
+  /auth/logout:
+    post:
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Logout admin/staff — clear httpOnly session cookie (§19.1)
+      tags:
+      - auth
+  /auth/reset-password:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Ubah password baru dengan token reset (FR-USER-04)
+      tags:
+      - auth
+  /country-requirements/{country_code}:
+    get:
+      parameters:
+      - description: 'Kode negara ISO (cth: JP)'
+        in: path
+        name: country_code
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Daftar persyaratan dokumen per negara (publik)
+      tags:
+      - country-requirements
+  /leads:
+    post:
+      responses: {}
+      summary: Submit form leads dari landing page
+      tags:
+      - leads
+  /packages:
+    get:
+      parameters:
+      - description: Kategori (reguler/umroh/halal/honeymoon)
+        in: query
+        name: category
+        type: string
+      - description: Destinasi
+        in: query
+        name: destination
+        type: string
+      - description: Harga minimum
+        in: query
+        name: price_min
+        type: number
+      - description: Harga maksimum
+        in: query
+        name: price_max
+        type: number
+      - default: 1
+        description: Halaman
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Per halaman
+        in: query
+        name: per_page
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Daftar paket wisata publik
+      tags:
+      - catalog
+  /packages/{slug}:
+    get:
+      parameters:
+      - description: Slug paket
+        in: path
+        name: slug
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Detail paket berdasarkan slug
+      tags:
+      - catalog
+  /portal/login:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Login peserta ke portal (FR-PORTAL-01)
+      tags:
+      - portal
+  /portal/me:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Info peserta saat ini + countdown + briefing active (FR-PORTAL-02)
+      tags:
+      - portal
+  /portal/my-data:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Unduh semua data pribadi (UU PDP §25.5 Right to Access)
+      tags:
+      - portal
+  /portal/signed-url:
+    get:
+      parameters:
+      - description: Nama bucket
+        in: query
+        name: bucket
+        required: true
+        type: string
+      - description: Path file
+        in: query
+        name: path
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Dapatkan signed URL untuk akses file private (1 jam, §19.2)
+      tags:
+      - upload
+  /portal/upload/document:
+    post:
+      consumes:
+      - multipart/form-data
+      parameters:
+      - description: File dokumen (max 5MB)
+        in: formData
+        name: file
+        required: true
+        type: file
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Upload dokumen peserta (multipart) ke Supabase private bucket (§16.2)
+      tags:
+      - upload
+  /portal/upload/payment-proof:
+    post:
+      consumes:
+      - multipart/form-data
+      parameters:
+      - description: Bukti transfer
+        in: formData
+        name: file
+        required: true
+        type: file
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Upload bukti transfer peserta (multipart) (AC-INV-02)
+      tags:
+      - upload
+securityDefinitions:
+  BearerAuth:
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

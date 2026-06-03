@@ -7,27 +7,100 @@ import (
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/user"
 )
 
-// UserRepo implements user.Repository against PostgreSQL.
-type UserRepo struct {
-	db *sql.DB
+type userRepo struct{ db *sql.DB }
+
+func NewUserRepo(db *sql.DB) user.Repository { return &userRepo{db} }
+
+const userCols = `id,name,email,password,role,COALESCE(phone,''),is_active,created_at,updated_at`
+
+func scanUser(s interface{ Scan(...interface{}) error }, u *user.User) error {
+	return s.Scan(&u.ID, &u.Name, &u.Email, &u.Password, &u.Role, &u.Phone, &u.IsActive, &u.CreatedAt, &u.UpdatedAt)
 }
 
-// NewUserRepo creates a new UserRepo.
-func NewUserRepo(db *sql.DB) *UserRepo {
-	return &UserRepo{db: db}
-}
-
-func (r *UserRepo) GetByEmail(ctx context.Context, email string) (*user.User, error) {
-	row := r.db.QueryRowContext(ctx,
-		`SELECT id, name, email, password, role, is_active FROM users WHERE email = $1 AND is_active = true`,
-		email,
-	)
+func (r *userRepo) GetByEmail(ctx context.Context, email string) (*user.User, error) {
 	var u user.User
-	if err := row.Scan(&u.ID, &u.Name, &u.Email, &u.Password, &u.Role, &u.IsActive); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
+	err := r.db.QueryRowContext(ctx,
+		`SELECT `+userCols+` FROM users WHERE email=$1 AND is_active=true`, email,
+	).Scan(&u.ID, &u.Name, &u.Email, &u.Password, &u.Role, &u.Phone, &u.IsActive, &u.CreatedAt, &u.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
 		return nil, err
 	}
 	return &u, nil
+}
+
+func (r *userRepo) GetByID(ctx context.Context, id string) (*user.User, error) {
+	var u user.User
+	err := r.db.QueryRowContext(ctx,
+		`SELECT `+userCols+` FROM users WHERE id=$1`, id,
+	).Scan(&u.ID, &u.Name, &u.Email, &u.Password, &u.Role, &u.Phone, &u.IsActive, &u.CreatedAt, &u.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+func (r *userRepo) Create(ctx context.Context, u *user.User) error {
+	return r.db.QueryRowContext(ctx, `
+		INSERT INTO users(id,name,email,password,role,phone,is_active,created_at,updated_at)
+		VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,NOW(),NOW())
+		RETURNING id,created_at,updated_at`,
+		u.Name, u.Email, u.Password, u.Role, u.Phone, u.IsActive,
+	).Scan(&u.ID, &u.CreatedAt, &u.UpdatedAt)
+}
+
+func (r *userRepo) Update(ctx context.Context, u *user.User) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE users SET name=$1,email=$2,role=$3,phone=$4,updated_at=NOW()
+		WHERE id=$5`,
+		u.Name, u.Email, u.Role, u.Phone, u.ID)
+	return err
+}
+
+func (r *userRepo) Deactivate(ctx context.Context, id string) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE users SET is_active=false,updated_at=NOW() WHERE id=$1`, id)
+	return err
+}
+
+func (r *userRepo) ListByRole(ctx context.Context, role string) ([]user.User, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+userCols+` FROM users WHERE role=$1 AND is_active=true ORDER BY name`, role)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanUsers(rows)
+}
+
+func (r *userRepo) ListKonsultan(ctx context.Context) ([]user.User, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+userCols+` FROM users WHERE role='konsultan' AND is_active=true ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanUsers(rows)
+}
+
+func (r *userRepo) CountActiveleadsByConsultant(ctx context.Context, consultantID string) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM leads WHERE assigned_to=$1 AND status NOT IN ('tidak_deal','peserta')`,
+		consultantID).Scan(&n)
+	return n, err
+}
+
+func scanUsers(rows *sql.Rows) ([]user.User, error) {
+	var list []user.User
+	for rows.Next() {
+		var u user.User
+		if err := rows.Scan(&u.ID, &u.Name, &u.Email, &u.Password, &u.Role,
+			&u.Phone, &u.IsActive, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			return nil, err
+		}
+		list = append(list, u)
+	}
+	return list, rows.Err()
 }

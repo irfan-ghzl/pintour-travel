@@ -58,6 +58,15 @@ docker-logs: ## Tail logs for all services
 docker-clean: ## Stop containers and remove volumes
 	docker compose down -v
 
+rebuild: ## Rebuild containers (keep DB data)
+	@pwsh -File scripts/rebuild.ps1 || bash scripts/rebuild.sh
+
+rebuild-fresh: ## WIPE DB + rebuild + run migrations + seed admin
+	@pwsh -File scripts/rebuild.ps1 -Fresh || bash scripts/rebuild.sh --fresh
+
+rebuild-api: ## Rebuild API saja (skip web)
+	@pwsh -File scripts/rebuild.ps1 -ApiOnly || bash scripts/rebuild.sh --api-only
+
 # ── Frontend ──────────────────────────────────────────────────────────────────
 
 web-install: ## Install npm dependencies for the web app

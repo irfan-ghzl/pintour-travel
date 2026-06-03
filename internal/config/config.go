@@ -11,12 +11,30 @@ type Config struct {
 	Database DatabaseConfig
 	Redis    RedisConfig
 	JWT      JWTConfig
+	Fonnte   FonnteConfig
+	Email    EmailConfig
+	Supabase SupabaseConfig
+}
+
+type EmailConfig struct {
+	ResendAPIKey string
+	FromAddress  string
+	AppURL       string // used for reset password link
+}
+
+type SupabaseConfig struct {
+	URL        string
+	ServiceKey string
 }
 
 type ServerConfig struct {
-	Port            string
-	Env             string
-	ConsultantPhone string
+	Port          string
+	Env           string
+	PortalBaseURL string
+}
+
+type FonnteConfig struct {
+	APIToken string
 }
 
 type DatabaseConfig struct {
@@ -38,9 +56,12 @@ type JWTConfig struct {
 func Load() *Config {
 	return &Config{
 		Server: ServerConfig{
-			Port:            getEnv("SERVER_PORT", "8080"),
-			Env:             getEnv("APP_ENV", "development"),
-			ConsultantPhone: getEnv("CONSULTANT_PHONE", ""),
+			Port:          getEnv("SERVER_PORT", "8080"),
+			Env:           getEnv("APP_ENV", "development"),
+			PortalBaseURL: getEnv("PORTAL_BASE_URL", "http://localhost:3000"),
+		},
+		Fonnte: FonnteConfig{
+			APIToken: getEnv("FONNTE_API_TOKEN", ""),
 		},
 		Database: DatabaseConfig{
 			DSN: getEnv("DATABASE_URL", "postgres://pintour:pintour_pass@localhost:5432/pintour_db?sslmode=disable"),
@@ -52,7 +73,16 @@ func Load() *Config {
 		},
 		JWT: JWTConfig{
 			Secret:          getEnv("JWT_SECRET", "supersecretkey_change_in_production"),
-			ExpirationHours: getEnvInt("JWT_EXPIRATION_HOURS", 72),
+			ExpirationHours: getEnvInt("JWT_EXPIRATION_HOURS", 8), // PRD §10.3: 8 jam
+		},
+		Email: EmailConfig{
+			ResendAPIKey: getEnv("RESEND_API_KEY", ""),
+			FromAddress:  getEnv("MAIL_FROM", "noreply@pintour.app"),
+			AppURL:       getEnv("APP_URL", "http://localhost:3000"),
+		},
+		Supabase: SupabaseConfig{
+			URL:        getEnv("SUPABASE_URL", ""),
+			ServiceKey: getEnv("SUPABASE_SERVICE_KEY", ""),
 		},
 	}
 }

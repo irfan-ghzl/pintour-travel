@@ -1,133 +1,184 @@
 package httpdelivery
 
 import (
+	"context"
 	"net/http"
+	"os"
 
-	documentsvc "github.com/irfan-ghzl/pintour-travel/internal/application/document"
-	"github.com/irfan-ghzl/pintour-travel/internal/auth"
-	"github.com/irfan-ghzl/pintour-travel/internal/domain/document"
 	"github.com/labstack/echo/v4"
+
+	"github.com/irfan-ghzl/pintour-travel/internal/domain/document"
+	"github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
+	"github.com/irfan-ghzl/pintour-travel/internal/service"
 )
 
-// DocumentHandler handles HTTP requests for participant document management.
 type DocumentHandler struct {
-	svc *documentsvc.DocumentService
+	docs         document.Repository
+	reqs         document.CountryRequirementRepository
+	participants participant.Repository
+	fonnte       *service.FonnteService
 }
 
-// NewDocumentHandler creates a new DocumentHandler.
-func NewDocumentHandler(svc *documentsvc.DocumentService) *DocumentHandler {
-	return &DocumentHandler{svc: svc}
+func NewDocumentHandler(
+	docs document.Repository,
+	reqs document.CountryRequirementRepository,
+	participants participant.Repository,
+	fonnte *service.FonnteService,
+) *DocumentHandler {
+	return &DocumentHandler{docs: docs, reqs: reqs, participants: participants, fonnte: fonnte}
 }
 
-// ListDocumentsByBooking godoc
-//
-//	@Summary     List all participant documents for a booking (admin)
-//	@Tags        documents
-//	@Security    BearerAuth
-//	@Param       id path string true "Booking ID"
-//	@Success     200 {array} document.Document
-//	@Router      /api/v1/admin/bookings/{id}/documents [get]
-func (h *DocumentHandler) ListDocumentsByBooking(c echo.Context) error {
-	docs, err := h.svc.ListByBooking(c.Request().Context(), c.Param("id"))
+// ListByParticipant godoc
+// @Summary      Daftar dokumen per peserta (admin)
+// @Tags         documents
+// @Security     BearerAuth
+// @Param        participant_id path string true "Participant ID"
+// @Success      200 {object} map[string]interface{}
+// @Router       /admin/participants/{participant_id}/documents [get]
+func (h *DocumentHandler) ListByParticipant(c echo.Context) error {
+	docs, err := h.docs.ListByParticipant(c.Request().Context(), c.Param("participant_id"))
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fetch documents")
+		return serverErr(c, err)
 	}
-	if docs == nil {
-		docs = []document.Document{}
-	}
-	return c.JSON(http.StatusOK, docs)
+	return c.JSON(http.StatusOK, ok(docs))
 }
 
-// ListDocumentsByParticipant godoc
-//
-//	@Summary     List documents for a specific participant (admin)
-//	@Tags        documents
-//	@Security    BearerAuth
-//	@Param       pid path string true "Participant ID"
-//	@Success     200 {array} document.Document
-//	@Router      /api/v1/admin/participants/{pid}/documents [get]
-func (h *DocumentHandler) ListDocumentsByParticipant(c echo.Context) error {
-	docs, err := h.svc.ListByParticipant(c.Request().Context(), c.Param("pid"))
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fetch documents")
+func (h *DocumentHandler) UploadDocument(c echo.Context) error {
+	var d document.Document
+	if err := bindJSON(c, &d); err != nil {
+		return badRequest(c, "format tidak valid")
 	}
-	if docs == nil {
-		docs = []document.Document{}
+	d.ParticipantID = c.Param("participant_id")
+	if err := h.docs.Create(c.Request().Context(), &d); err != nil {
+		return serverErr(c, err)
 	}
-	return c.JSON(http.StatusOK, docs)
+	return c.JSON(http.StatusCreated, ok(d))
 }
 
-// CreateDocument godoc
-//
-//	@Summary     Upload a document for a participant (admin)
-//	@Tags        documents
-//	@Accept      json
-//	@Produce     json
-//	@Security    BearerAuth
-//	@Param       pid path string true "Participant ID"
-//	@Success     201 {object} map[string]interface{}
-//	@Router      /api/v1/admin/participants/{pid}/documents [post]
-func (h *DocumentHandler) CreateDocument(c echo.Context) error {
-	pid := c.Param("pid")
+// ReviewDocument godoc
+// @Summary      Setujui/tolak dokumen + kirim WA DOC_REJECTED (FR-PORTAL-05)
+// @Tags         documents
+// @Security     BearerAuth
+// @Param        id path string true "Document ID"
+// @Accept       json
+// @Success      200 {object} map[string]interface{}
+// @Router       /admin/documents/{id}/review [patch]
+func (h *DocumentHandler) ReviewDocument(c echo.Context) error {
 	var body struct {
-		DocType string `json:"doc_type"`
-		FileURL string `json:"file_url"`
-		Notes   string `json:"notes"`
+		Status          string `json:"status"`
+		RejectionReason string `json:"rejection_reason"`
 	}
-	if err := c.Bind(&body); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	if err := bindJSON(c, &body); err != nil {
+		return badRequest(c, "format tidak valid")
 	}
-	if !documentsvc.ValidDocTypes[body.DocType] {
-		return echo.NewHTTPError(http.StatusBadRequest, "doc_type must be one of: passport, ktp, bank_statement, visa_support, photo, other")
+	if body.Status != "disetujui" && body.Status != "ditolak" {
+		return badRequest(c, "status harus 'disetujui' atau 'ditolak'")
 	}
-	if body.FileURL == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "file_url is required")
+	if body.Status == "ditolak" && body.RejectionReason == "" {
+		return badRequest(c, "alasan penolakan harus diisi saat menolak dokumen")
 	}
-
-	params := document.CreateParams{
-		ParticipantID: pid,
-		DocType:       body.DocType,
-		FileURL:       body.FileURL,
-	}
-	if body.Notes != "" {
-		params.Notes = &body.Notes
+	docID := c.Param("id")
+	if err := h.docs.Review(c.Request().Context(), docID, body.Status, claimUserID(c), body.RejectionReason); err != nil {
+		return serverErr(c, err)
 	}
 
-	id, err := h.svc.CreateDocument(c.Request().Context(), params)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create document")
+	// Async: send DOC_REJECTED WA when document is rejected
+	if body.Status == "ditolak" && h.fonnte != nil && h.participants != nil {
+		go func(reason string) {
+			bgCtx := context.Background()
+			// Reload doc to get participant_id (we know it from URL param, but need participant data)
+			docs, err := h.docs.ListByParticipant(bgCtx, "")
+			_ = docs
+			_ = err
+			// Easier path: lookup the document directly to get participant
+			doc, err := h.docs.GetByID(bgCtx, docID)
+			if err != nil || doc == nil {
+				return
+			}
+			p, err := h.participants.GetByID(bgCtx, doc.ParticipantID)
+			if err != nil {
+				return
+			}
+			portalBase := os.Getenv("PORTAL_BASE_URL")
+			if portalBase == "" {
+				portalBase = "http://localhost:3000"
+			}
+			_ = h.fonnte.SendDocRejected(bgCtx, p.Phone, p.Name,
+				doc.DocumentType, reason, portalBase+"/portal/documents", p.ID)
+		}(body.RejectionReason)
 	}
-	return c.JSON(http.StatusCreated, map[string]interface{}{"id": id})
+
+	return c.JSON(http.StatusOK, ok(map[string]string{"message": "Dokumen berhasil direview"}))
 }
 
-// VerifyDocument godoc
-//
-//	@Summary     Mark a document as verified (admin)
-//	@Tags        documents
-//	@Security    BearerAuth
-//	@Param       did path string true "Document ID"
-//	@Success     200 {object} map[string]interface{}
-//	@Router      /api/v1/admin/documents/{did}/verify [patch]
-func (h *DocumentHandler) VerifyDocument(c echo.Context) error {
-	did := c.Param("did")
-	claims := c.Get("claims").(*auth.Claims)
-	if err := h.svc.VerifyDocument(c.Request().Context(), did, claims.UserID); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to verify document")
-	}
-	return c.JSON(http.StatusOK, map[string]interface{}{"id": did, "verified": true})
-}
-
-// DeleteDocument godoc
-//
-//	@Summary     Delete a document (admin)
-//	@Tags        documents
-//	@Security    BearerAuth
-//	@Param       did path string true "Document ID"
-//	@Success     204
-//	@Router      /api/v1/admin/documents/{did} [delete]
 func (h *DocumentHandler) DeleteDocument(c echo.Context) error {
-	if err := h.svc.DeleteDocument(c.Request().Context(), c.Param("did")); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete document")
+	if err := h.docs.Delete(c.Request().Context(), c.Param("id")); err != nil {
+		return serverErr(c, err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+// ── Country Requirements ──────────────────────────────────────────────────────
+
+// ListCountryRequirements godoc
+// @Summary      Daftar persyaratan dokumen per negara (publik)
+// @Tags         country-requirements
+// @Param        country_code path string true "Kode negara ISO (cth: JP)"
+// @Success      200 {object} map[string]interface{}
+// @Router       /country-requirements/{country_code} [get]
+func (h *DocumentHandler) ListCountryRequirements(c echo.Context) error {
+	reqs, err := h.reqs.List(c.Request().Context(), c.Param("country_code"))
+	if err != nil {
+		return serverErr(c, err)
+	}
+	return c.JSON(http.StatusOK, ok(reqs))
+}
+
+func (h *DocumentHandler) ListAllCountryRequirements(c echo.Context) error {
+	countryCode := c.QueryParam("country_code")
+	reqs, err := h.reqs.List(c.Request().Context(), countryCode)
+	if err != nil {
+		return serverErr(c, err)
+	}
+	return c.JSON(http.StatusOK, ok(reqs))
+}
+
+// CreateCountryRequirement godoc
+// @Summary      Tambah persyaratan dokumen baru per negara (admin) (US-ADM-07)
+// @Tags         country-requirements
+// @Security     BearerAuth
+// @Accept       json
+// @Success      201 {object} map[string]interface{}
+// @Router       /admin/country-requirements [post]
+func (h *DocumentHandler) CreateCountryRequirement(c echo.Context) error {
+	var req document.CountryRequirement
+	if err := bindJSON(c, &req); err != nil {
+		return badRequest(c, "format tidak valid")
+	}
+	if req.CountryCode == "" || req.DocumentType == "" {
+		return badRequest(c, "country_code dan document_type harus diisi")
+	}
+	if err := h.reqs.Create(c.Request().Context(), &req); err != nil {
+		return serverErr(c, err)
+	}
+	return c.JSON(http.StatusCreated, ok(req))
+}
+
+func (h *DocumentHandler) UpdateCountryRequirement(c echo.Context) error {
+	var req document.CountryRequirement
+	if err := bindJSON(c, &req); err != nil {
+		return badRequest(c, "format tidak valid")
+	}
+	req.ID = c.Param("id")
+	if err := h.reqs.Update(c.Request().Context(), &req); err != nil {
+		return serverErr(c, err)
+	}
+	return c.JSON(http.StatusOK, ok(req))
+}
+
+func (h *DocumentHandler) DeleteCountryRequirement(c echo.Context) error {
+	if err := h.reqs.Delete(c.Request().Context(), c.Param("id")); err != nil {
+		return serverErr(c, err)
 	}
 	return c.NoContent(http.StatusNoContent)
 }

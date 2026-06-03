@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   # ── PostgreSQL ────────────────────────────────────────────────────────────────
   db:
@@ -12,14 +10,17 @@ services:
       POSTGRES_PASSWORD: pintour_pass
     volumes:
       - db_data:/var/lib/postgresql/data
-      - ./db/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+      # Auto-apply semua migration saat container pertama kali start.
+      # Postgres jalankan file di /docker-entrypoint-initdb.d/ urut nama.
+      - ./db/migrations:/docker-entrypoint-initdb.d:ro
     ports:
       - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U pintour -d pintour_db"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 60s    # beri waktu init script (apply migration 001-005) selesai
 
   # ── Redis ─────────────────────────────────────────────────────────────────────
   redis:
@@ -37,21 +38,21 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── Go API server ─────────────────────────────────────────────────────────────
+  # ── Go API server (PRD §18: pgx/v5 + gocron + rs/cors + validator) ──────────
   api:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: pintour_api
     restart: unless-stopped
+    env_file:
+      - .env                                  # baca semua env dari .env
     environment:
-      SERVER_PORT:           8080
-      APP_ENV:               production
-      DATABASE_URL:          postgres://pintour:pintour_pass@db:5432/pintour_db?sslmode=disable
-      REDIS_ADDR:            redis:6379
-      REDIS_PASSWORD:        ""
-      JWT_SECRET:            change_this_to_a_strong_secret_in_production
-      JWT_EXPIRATION_HOURS:  72
+      # Override yang khusus untuk container (host db & redis berbeda dengan localhost)
+      DATABASE_URL:    postgres://pintour:pintour_pass@db:5432/pintour_db?sslmode=disable
+      REDIS_ADDR:      redis:6379
+      APP_ENV:         ${APP_ENV:-production} # default production di container
+      SERVER_PORT:     8080
     ports:
       - "8080:8080"
     depends_on:

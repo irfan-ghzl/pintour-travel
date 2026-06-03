@@ -1,35 +1,87 @@
-# Go
+# ─────────────────────────────────────────────────────────────────────────────
+# Pintour Travel — .gitignore
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Go build artifacts ──────────────────────────────────────────────────────
 bin/
-*.exe
+*.exe                    # binari hasil compile (seed.exe, server.exe, dll)
 *.test
 *.out
 vendor/
+coverage.out
+coverage.html
 
-# Node / Frontend
+# ── Node / Frontend ─────────────────────────────────────────────────────────
 web/node_modules/
 web/dist/
 web/.env
 web/.env.local
+web/*.tsbuildinfo
 
-# Environment files
+# ── Environment files (SECRETS — JANGAN COMMIT) ────────────────────────────
 .env
 .env.local
 .env.*.local
+.env.production
 
-# IDE
+# ── IDE & Editor ────────────────────────────────────────────────────────────
 .idea/
 .vscode/
 *.swp
 *.swo
+*.bak
 
-# Docker
-*.log
+# ── AI assistant context ────────────────────────────────────────────────────
+.claude/
 
-# OS
+# ── OS files ────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# Generated files (check these in selectively)
+# ── Logs ────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dokumen personal / internal (NOT for public repo)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Skripsi & dokumen akademis personal
+docs/skripsi/
+docs/OUTLINE*.pdf
+docs/OUTLINE*.docx
+
+# Draft pribadi / catatan internal
+txt
+txt bab 1.md
+txt daftar pustaka.md
+*.draft.md
+
+# Internal PRD enhancement notes (bukan PRD utama)
+docs/PRD-booking-enhancement.md
+docs/prd-automation.md
+docs/refactor.md
+
+# PRD utama (kalau dianggap dokumen internal mitra Pintour)
+Product Requirements Document (PRD).md
+Product Requirements Document (PRD)/
+
+# Metadata Docmost
+docmost-metadata.json
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Generated files — keep selective
+# ─────────────────────────────────────────────────────────────────────────────
+# Swagger output di-generate via `make swag` jadi opsional ke repo:
 # docs/swagger.json
 # docs/swagger.yaml
-# internal/repository/*.go  # sqlc generated
+# docs/docs.go
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Misc
+# ─────────────────────────────────────────────────────────────────────────────
+tmp/
+*.tmp
+*.cache
+.parcel-cache/

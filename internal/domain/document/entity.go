@@ -1,33 +1,36 @@
 package document
 
-import "context"
+import "time"
 
-// Document represents a file uploaded for a booking participant.
+// Document is a file uploaded by a participant.
 type Document struct {
-	ID            string  `json:"id"`
-	ParticipantID string  `json:"participant_id"`
-	DocType       string  `json:"doc_type"` // passport, ktp, bank_statement, visa_support
-	FileURL       string  `json:"file_url"`
-	Notes         *string `json:"notes,omitempty"`
-	Verified      bool    `json:"verified"`
-	VerifiedBy    *string `json:"verified_by,omitempty"`
-	VerifiedAt    *string `json:"verified_at,omitempty"`
-	UploadedAt    string  `json:"uploaded_at"`
+	ID              string     `json:"id"`
+	ParticipantID   string     `json:"participant_id"`
+	DocumentType    string     `json:"document_type"`
+	FilePath        string     `json:"file_path"`
+	FileName        string     `json:"file_name"`
+	Status          string     `json:"status"`
+	RejectionReason string     `json:"rejection_reason"`
+	ReviewedBy      *string    `json:"reviewed_by,omitempty"`
+	UploadedAt      time.Time  `json:"uploaded_at"`
+	ReviewedAt      *time.Time `json:"reviewed_at,omitempty"`
+	// Joined
+	ParticipantName string `json:"participant_name,omitempty"`
 }
 
-// CreateParams contains the data needed to upload a participant document.
-type CreateParams struct {
-	ParticipantID string
-	DocType       string
-	FileURL       string
-	Notes         *string
+// CountryRequirement defines documents needed for a destination country.
+type CountryRequirement struct {
+	ID           string    `json:"id"`
+	CountryCode  string    `json:"country_code"`
+	CountryName  string    `json:"country_name"`
+	DocumentType string    `json:"document_type"`
+	IsRequired   bool      `json:"is_required"`
+	Description  string    `json:"description"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
-// Repository is the persistence abstraction for the document domain.
-type Repository interface {
-	ListByParticipant(ctx context.Context, participantID string) ([]Document, error)
-	ListByBooking(ctx context.Context, bookingID string) ([]Document, error)
-	Create(ctx context.Context, p CreateParams) (string, error)
-	Verify(ctx context.Context, id, verifiedByUserID string) error
-	Delete(ctx context.Context, id string) error
+// Filter for listing documents.
+type Filter struct {
+	ParticipantID *string
+	Status        *string
 }

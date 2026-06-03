@@ -1,0 +1,54 @@
+# ── Git ──────────────────────────────────────────────────────────────────────
+.git/
+.gitignore
+.gitattributes
+
+# ── IDE / Editor ─────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Env (NEVER copy secrets into image) ──────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Go build artifacts ───────────────────────────────────────────────────────
+bin/
+*.exe
+*.test
+*.out
+vendor/
+
+# ── Node / Frontend ──────────────────────────────────────────────────────────
+web/node_modules/
+web/dist/
+web/.env
+web/.env.local
+web/coverage/
+
+# ── Docs (tidak perlu di runtime image) ──────────────────────────────────────
+docs/*.md
+docs/swagger.yaml
+Product Requirements Document (PRD)/
+*.md
+!docs/docs.go
+!docs/swagger.json
+
+# ── Docker files (recursive include akan jadi infinite loop) ────────────────
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# ── Misc ─────────────────────────────────────────────────────────────────────
+# (nginx.conf TETAP di-include karena dibutuhkan Dockerfile.web)
+docmost-metadata.json
+txt
+txt*.md
+*.log
+tmp/
+sqlc.yaml
