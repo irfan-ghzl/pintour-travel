@@ -9,22 +9,38 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// JWTMiddleware validates Bearer tokens and attaches claims to the Echo context.
+// JWTCookieName — nama cookie httpOnly untuk JWT admin/staff (§19.1).
+const JWTCookieName = "pintour_session"
+
+// JWTMiddleware validates Bearer tokens or httpOnly session cookie (§19.1).
+// Preferensi: cookie httpOnly (mencegah XSS) → fallback Authorization header.
 func JWTMiddleware(secret string) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			authHeader := c.Request().Header.Get("Authorization")
-			if authHeader == "" {
-				return echo.NewHTTPError(http.StatusUnauthorized, "missing authorization header")
+			tokenStr := ""
+
+			// 1. Coba dari cookie httpOnly (preferensi PRD §19.1)
+			if cookie, err := c.Cookie(JWTCookieName); err == nil && cookie.Value != "" {
+				tokenStr = cookie.Value
 			}
 
-			parts := strings.SplitN(authHeader, " ", 2)
-			if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") {
-				return echo.NewHTTPError(http.StatusUnauthorized, "invalid authorization header format")
+			// 2. Fallback ke Authorization header (untuk klien non-browser / Swagger)
+			if tokenStr == "" {
+				authHeader := c.Request().Header.Get("Authorization")
+				if authHeader != "" {
+					parts := strings.SplitN(authHeader, " ", 2)
+					if len(parts) == 2 && strings.EqualFold(parts[0], "bearer") {
+						tokenStr = parts[1]
+					}
+				}
+			}
+
+			if tokenStr == "" {
+				return echo.NewHTTPError(http.StatusUnauthorized, "missing authorization (cookie atau Bearer token)")
 			}
 
 			claims := &auth.Claims{}
-			token, err := jwt.ParseWithClaims(parts[1], claims, func(t *jwt.Token) (interface{}, error) {
+			token, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (interface{}, error) {
 				if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 					return nil, echo.NewHTTPError(http.StatusUnauthorized, "unexpected signing method")
 				}
@@ -40,4 +56,30 @@ func JWTMiddleware(secret string) echo.MiddlewareFunc {
 			return next(c)
 		}
 	}
+}
+
+// SetSessionCookie sets the httpOnly JWT cookie (§19.1).
+// Secure flag mengikuti env: production = HTTPS only.
+func SetSessionCookie(c echo.Context, token string, maxAgeSec int, prod bool) {
+	c.SetCookie(&http.Cookie{
+		Name:     JWTCookieName,
+		Value:    token,
+		Path:     "/",
+		MaxAge:   maxAgeSec,
+		HttpOnly: true,
+		Secure:   prod,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+// ClearSessionCookie removes the JWT cookie on logout.
+func ClearSessionCookie(c echo.Context) {
+	c.SetCookie(&http.Cookie{
+		Name:     JWTCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
 }

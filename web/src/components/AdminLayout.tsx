@@ -1,25 +1,38 @@
-import { Outlet, Link, useLocation, Navigate } from 'react-router-dom'
+import { Outlet, Link, useLocation } from 'react-router-dom'
 import {
-  LayoutDashboard, Package, MessageSquare, FileText, Users,
-  LogOut, MapPin,
+  LayoutDashboard, Package, Users, FileText, ClipboardList,
+  Plane, FolderCheck, LogOut, MapPin, Shield, UserCheck, Globe,
 } from 'lucide-react'
 import { authStorage } from '../utils/auth'
 
 const sidebarLinks = [
-  { to: '/admin', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/admin/packages', label: 'Paket Wisata', icon: Package },
-  { to: '/admin/inquiries', label: 'Konsultasi', icon: MessageSquare },
-  { to: '/admin/quotations', label: 'Penawaran', icon: FileText },
-  { to: '/admin/bookings', label: 'Booking & Manifest', icon: Users },
+  { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, exact: true, roles: [] },
+  { to: '/admin/packages', label: 'Paket Wisata', icon: Package, roles: [] },
+  { to: '/admin/leads', label: 'CRM Leads', icon: Users, roles: ['super_admin', 'admin', 'konsultan'] },
+  { to: '/admin/participants', label: 'Peserta', icon: ClipboardList, roles: ['super_admin', 'admin'] },
+  { to: '/admin/invoices', label: 'Invoice', icon: FileText, roles: ['super_admin', 'admin'] },
+  { to: '/admin/documents', label: 'Review Dokumen', icon: FolderCheck, roles: ['super_admin', 'admin'] },
+  { to: '/admin/airport', label: 'Airport Handling', icon: Plane, roles: [] },
+  { to: '/admin/tour-leaders', label: 'Profil Tour Leader', icon: UserCheck, roles: ['super_admin', 'admin'] },
+  { to: '/admin/country-requirements', label: 'Persyaratan Dokumen', icon: Globe, roles: ['super_admin', 'admin'] },
+  { to: '/admin/users', label: 'Manajemen User', icon: Shield, roles: ['super_admin'] },
 ]
 
 export default function AdminLayout() {
   const { pathname } = useLocation()
   const user = authStorage.getUser()
+  const role = user?.role ?? ''
 
-  if (!user) return <Navigate to="/login" replace />
+  const visibleLinks = sidebarLinks.filter(l =>
+    l.roles.length === 0 || l.roles.includes(role)
+  )
 
-  const handleLogout = () => {
+  function isActive(to: string, exact?: boolean) {
+    if (exact) return pathname === to
+    return pathname === to || pathname.startsWith(to + '/')
+  }
+
+  function handleLogout() {
     authStorage.clearSession()
     window.location.href = '/login'
   }
@@ -27,39 +40,37 @@ export default function AdminLayout() {
   return (
     <div className="min-h-screen flex bg-gray-100">
       {/* Sidebar */}
-      <aside className="w-64 bg-gray-900 text-gray-300 flex flex-col">
-        <div className="h-16 flex items-center gap-2 px-6 border-b border-gray-700">
-          <MapPin className="w-5 h-5 text-accent-400" />
-          <span className="font-bold text-white text-lg">Pintour Admin</span>
+      <aside className="w-60 bg-gray-900 text-gray-300 flex flex-col shrink-0">
+        <div className="h-14 flex items-center gap-2 px-5 border-b border-gray-700">
+          <MapPin className="w-5 h-5 text-emerald-400" />
+          <span className="font-bold text-white text-sm">Pintour Admin</span>
         </div>
 
-        <nav className="flex-1 py-6 px-3 flex flex-col gap-1">
-          {sidebarLinks.map(({ to, label, icon: Icon }) => {
-            const active = pathname === to || (to !== '/admin' && pathname.startsWith(to))
-            return (
-              <Link
-                key={to}
-                to={to}
-                className={`flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                  active
-                    ? 'bg-primary-700 text-white'
-                    : 'hover:bg-gray-800 text-gray-400 hover:text-white'
-                }`}
-              >
-                <Icon className="w-4 h-4" />
-                {label}
-              </Link>
-            )
-          })}
+        <nav className="flex-1 py-4 px-3 flex flex-col gap-0.5 overflow-y-auto">
+          {visibleLinks.map(({ to, label, icon: Icon, exact }) => (
+            <Link
+              key={to}
+              to={to}
+              className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                isActive(to, exact)
+                  ? 'bg-emerald-700 text-white'
+                  : 'text-gray-400 hover:bg-gray-800 hover:text-white'
+              }`}
+            >
+              <Icon className="w-4 h-4 shrink-0" />
+              {label}
+            </Link>
+          ))}
         </nav>
 
-        <div className="px-3 pb-6">
-          <div className="px-4 py-3 rounded-lg bg-gray-800 text-xs text-gray-400 mb-2">
-            {user.name} &bull; <span className="capitalize">{user.role}</span>
+        <div className="px-3 pb-4">
+          <div className="px-3 py-2.5 rounded-lg bg-gray-800 text-xs text-gray-400 mb-2">
+            <p className="font-medium text-gray-200 truncate">{user?.name ?? '—'}</p>
+            <p className="capitalize">{role?.replace('_', ' ') ?? '—'}</p>
           </div>
           <button
             onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm
+            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm
                        font-medium text-gray-400 hover:bg-gray-800 hover:text-red-400 transition-colors"
           >
             <LogOut className="w-4 h-4" />
@@ -68,11 +79,11 @@ export default function AdminLayout() {
         </div>
       </aside>
 
-      {/* Main content */}
+      {/* Main */}
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="h-16 bg-white border-b flex items-center px-6 shadow-sm">
-          <h1 className="text-sm font-medium text-gray-500">
-            {sidebarLinks.find((l) => l.to === pathname || (l.to !== '/admin' && pathname.startsWith(l.to)))?.label ?? 'Admin'}
+        <header className="h-13 bg-white border-b flex items-center px-6 shadow-sm shrink-0 py-3.5">
+          <h1 className="text-sm font-semibold text-gray-600">
+            {visibleLinks.find(l => isActive(l.to, l.exact))?.label ?? 'Admin'}
           </h1>
         </header>
         <main className="flex-1 p-6 overflow-auto">
