@@ -1,6 +1,8 @@
 package httpdelivery
 
 import (
+	"database/sql"
+	"errors"
 	"net/http"
 	"os"
 
@@ -27,8 +29,12 @@ func (h *InvoiceHandler) ListInvoices(c echo.Context) error {
 		Page:    queryInt(c, "page", 1),
 		PerPage: queryPageSize(c, "per_page", 20),
 	}
-	if v := c.QueryParam("status"); v != "" { f.Status = &v }
-	if v := c.QueryParam("participant_id"); v != "" { f.ParticipantID = &v }
+	if v := c.QueryParam("status"); v != "" {
+		f.Status = &v
+	}
+	if v := c.QueryParam("participant_id"); v != "" {
+		f.ParticipantID = &v
+	}
 	list, total, err := h.svc.ListInvoices(c.Request().Context(), f)
 	if err != nil {
 		return serverErr(c, err)
@@ -157,6 +163,13 @@ func (h *InvoiceHandler) ReviewProof(c echo.Context) error {
 	// and notify the participant.
 	if err := h.svc.ReviewProofAndSettle(c.Request().Context(), c.Param("id"), c.Param("proof_id"),
 		body.Status, claimUserID(c), body.Notes, portalBase); err != nil {
+		switch {
+		case errors.Is(err, invoicesvc.ErrProofNotForInvoice):
+			return c.JSON(http.StatusUnprocessableEntity,
+				errResponse("PROOF_MISMATCH", err.Error()))
+		case errors.Is(err, sql.ErrNoRows):
+			return notFound(c, "bukti bayar tidak ditemukan")
+		}
 		return serverErr(c, err)
 	}
 	return c.JSON(http.StatusOK, ok(nil))

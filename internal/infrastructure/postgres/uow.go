@@ -41,9 +41,12 @@ func (u *unitOfWork) Do(ctx context.Context, fn func(context.Context, uow.Repos)
 	defer func() { _ = tx.Rollback() }()
 
 	if err := fn(ctx, uow.Repos{
-		Participants: &participantRepo{tx},
-		Leads:        &leadRepo{tx},
-		PortalUsers:  &portalUserRepo{tx},
+		Participants:  &participantRepo{tx},
+		Leads:         &leadRepo{tx},
+		PortalUsers:   &portalUserRepo{tx},
+		Invoices:      &invoiceRepo{tx},
+		Proofs:        &paymentProofRepo{tx},
+		GatewayOrders: &gatewayOrderRepo{tx},
 	}); err != nil {
 		// Returned unchanged so the caller can still match its own sentinels.
 		return err

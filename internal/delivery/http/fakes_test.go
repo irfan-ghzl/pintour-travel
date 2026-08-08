@@ -66,9 +66,12 @@ func (f *fakeErr) Fail(err error) { f.err = err }
 // intended state, so the tests that exist to prove nothing is left behind would
 // pass against a service that had never been made transactional at all.
 type fakeUnitOfWork struct {
-	participants *fakeParticipantRepo
-	leads        *fakeLeadRepo
-	portalUsers  *fakePortalUserRepo
+	participants  *fakeParticipantRepo
+	leads         *fakeLeadRepo
+	portalUsers   *fakePortalUserRepo
+	invoices      *fakeInvoiceRepo
+	proofs        *fakeProofRepo
+	gatewayOrders *fakeGatewayOrderRepo
 	// Committed and RolledBack count outcomes, so a test can tell "the unit
 	// rolled back" apart from "the unit was never entered".
 	Committed  int
@@ -93,11 +96,17 @@ func (u *fakeUnitOfWork) Do(ctx context.Context, fn func(context.Context, uow.Re
 		u.participants.snapshot(),
 		u.leads.snapshot(),
 		u.portalUsers.snapshot(),
+		u.invoices.snapshot(),
+		u.proofs.snapshot(),
+		u.gatewayOrders.snapshot(),
 	}
 	if err := fn(ctx, uow.Repos{
-		Participants: u.participants,
-		Leads:        u.leads,
-		PortalUsers:  u.portalUsers,
+		Participants:  u.participants,
+		Leads:         u.leads,
+		PortalUsers:   u.portalUsers,
+		Invoices:      u.invoices,
+		Proofs:        u.proofs,
+		GatewayOrders: u.gatewayOrders,
 	}); err != nil {
 		for _, restore := range undo {
 			restore()
@@ -812,6 +821,10 @@ func (r *fakeInvoiceRepo) Update(_ context.Context, inv *domainInvoice.Invoice) 
 	return nil
 }
 
+func (r *fakeInvoiceRepo) snapshot() func() {
+	return snapshotRows(&r.invoices, &r.order)
+}
+
 // SoftDelete marks an invoice deleted the way a delete endpoint would, so a test
 // can ask what the rest of the system does with it afterwards.
 func (r *fakeInvoiceRepo) SoftDelete(id string) {
@@ -942,6 +955,11 @@ type fakeProofRepo struct {
 
 func newFakeProofRepo() *fakeProofRepo { return &fakeProofRepo{} }
 
+func (r *fakeProofRepo) snapshot() func() {
+	proofs := append([]domainInvoice.PaymentProof{}, r.proofs...)
+	return func() { r.proofs = proofs }
+}
+
 func (r *fakeProofRepo) Seed(pp domainInvoice.PaymentProof) { r.proofs = append(r.proofs, pp) }
 
 func (r *fakeProofRepo) Create(_ context.Context, pp *domainInvoice.PaymentProof) error {
@@ -999,6 +1017,69 @@ func (r *fakeProofRepo) Review(_ context.Context, id, status, reviewedBy, notes 
 		}
 	}
 	return errNotFound
+}
+
+// ─── invoice.GatewayOrderRepository ───────────────────────────────────────────
+
+type fakeGatewayOrderRepo struct {
+	fakeErr
+	orders []domainInvoice.GatewayOrder
+	// applied is the idempotency table: one entry per notification already
+	// recorded, keyed the way the unique index keys it.
+	applied map[string]bool
+}
+
+func newFakeGatewayOrderRepo() *fakeGatewayOrderRepo {
+	return &fakeGatewayOrderRepo{applied: map[string]bool{}}
+}
+
+func (r *fakeGatewayOrderRepo) Seed(o domainInvoice.GatewayOrder) {
+	r.orders = append(r.orders, o)
+}
+
+func (r *fakeGatewayOrderRepo) Create(_ context.Context, o *domainInvoice.GatewayOrder) error {
+	if r.err != nil {
+		return r.err
+	}
+	if o.ID == "" {
+		o.ID = fmt.Sprintf("gateway-order-%d", len(r.orders)+1)
+	}
+	o.CreatedAt = time.Now()
+	r.orders = append(r.orders, *o)
+	return nil
+}
+
+func (r *fakeGatewayOrderRepo) FindInvoiceIDByOrder(_ context.Context, orderID string) (string, error) {
+	if r.err != nil {
+		return "", r.err
+	}
+	for _, o := range r.orders {
+		if o.OrderID == orderID {
+			return o.InvoiceID, nil
+		}
+	}
+	return "", errNotFound
+}
+
+func (r *fakeGatewayOrderRepo) ClaimNotification(_ context.Context, n domainInvoice.GatewayNotification) (bool, error) {
+	if r.err != nil {
+		return false, r.err
+	}
+	key := n.IdempotencyKey()
+	if r.applied[key] {
+		return false, nil
+	}
+	r.applied[key] = true
+	return true, nil
+}
+
+func (r *fakeGatewayOrderRepo) snapshot() func() {
+	orders := append([]domainInvoice.GatewayOrder{}, r.orders...)
+	applied := make(map[string]bool, len(r.applied))
+	for k, v := range r.applied {
+		applied[k] = v
+	}
+	return func() { r.orders, r.applied = orders, applied }
 }
 
 // ─── package.Repository ───────────────────────────────────────────────────────

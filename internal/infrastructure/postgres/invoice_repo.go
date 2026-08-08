@@ -9,7 +9,7 @@ import (
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/invoice"
 )
 
-type invoiceRepo struct{ db *sql.DB }
+type invoiceRepo struct{ db dbtx }
 
 func NewInvoiceRepo(db *sql.DB) invoice.Repository { return &invoiceRepo{db} }
 
@@ -231,7 +231,7 @@ func (r *invoiceRepo) ListUnpaidOlderThan(ctx context.Context, days int) ([]invo
 
 // ─── PaymentProof ─────────────────────────────────────────────────────────────
 
-type paymentProofRepo struct{ db *sql.DB }
+type paymentProofRepo struct{ db dbtx }
 
 func NewPaymentProofRepo(db *sql.DB) invoice.PaymentProofRepository {
 	return &paymentProofRepo{db}

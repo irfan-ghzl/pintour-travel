@@ -17,6 +17,7 @@ package uow
 import (
 	"context"
 
+	"github.com/irfan-ghzl/pintour-travel/internal/domain/invoice"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/lead"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/portaluser"
@@ -35,6 +36,14 @@ type Repos struct {
 	Participants participant.Repository
 	Leads        lead.Repository
 	PortalUsers  portaluser.Repository
+	// Added for the settlement unit: recording a gateway payment claims the
+	// notification, writes the proof, and settles the invoice, and any of those
+	// without the others is a money bug — a claimed notification whose proof was
+	// never written loses a payment silently, which is exactly what a gateway
+	// retry exists to prevent.
+	Invoices      invoice.Repository
+	Proofs        invoice.PaymentProofRepository
+	GatewayOrders invoice.GatewayOrderRepository
 }
 
 // Runner runs work as a single unit.

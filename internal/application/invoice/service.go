@@ -2,6 +2,7 @@ package invoice
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	domainInvoice "github.com/irfan-ghzl/pintour-travel/internal/domain/invoice"
 	domainParticipant "github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
+	"github.com/irfan-ghzl/pintour-travel/internal/domain/uow"
 	"github.com/irfan-ghzl/pintour-travel/internal/safe"
 	"github.com/irfan-ghzl/pintour-travel/internal/service"
 )
@@ -31,27 +33,41 @@ var ErrNotOwned = errors.New("invoice not found")
 // ErrInvoiceAlreadyPaid is returned when a fully-paid invoice is sent to the gateway.
 var ErrInvoiceAlreadyPaid = errors.New("invoice sudah lunas")
 
+// ErrProofNotForInvoice is returned when a payment proof is reviewed against an
+// invoice it was not uploaded against.
+var ErrProofNotForInvoice = errors.New("bukti bayar bukan milik invoice ini")
+
 // Service handles invoice business logic.
 type Service struct {
-	invoices     domainInvoice.Repository
-	proofs       domainInvoice.PaymentProofRepository
-	participants domainParticipant.Repository
-	fonnte       *service.FonnteService
-	pdf          *service.PDFService
-	email        *service.EmailService
-	midtrans     *service.MidtransService
+	invoices      domainInvoice.Repository
+	proofs        domainInvoice.PaymentProofRepository
+	participants  domainParticipant.Repository
+	gatewayOrders domainInvoice.GatewayOrderRepository
+	// unit runs a gateway settlement as one all-or-nothing operation: claiming
+	// the notification and recording the payment it authorises cannot come apart.
+	unit     uow.Runner
+	fonnte   *service.FonnteService
+	pdf      *service.PDFService
+	email    *service.EmailService
+	midtrans *service.MidtransService
 }
 
 func NewService(
 	invoices domainInvoice.Repository,
 	proofs domainInvoice.PaymentProofRepository,
 	participants domainParticipant.Repository,
+	gatewayOrders domainInvoice.GatewayOrderRepository,
+	unit uow.Runner,
 	fonnte *service.FonnteService,
 	pdf *service.PDFService,
 	email *service.EmailService,
 	midtrans *service.MidtransService,
 ) *Service {
-	return &Service{invoices: invoices, proofs: proofs, participants: participants, fonnte: fonnte, pdf: pdf, email: email, midtrans: midtrans}
+	return &Service{
+		invoices: invoices, proofs: proofs, participants: participants,
+		gatewayOrders: gatewayOrders, unit: unit,
+		fonnte: fonnte, pdf: pdf, email: email, midtrans: midtrans,
+	}
 }
 
 // sumApprovedProofs returns the total amount of approved (disetujui) proofs for
@@ -277,9 +293,18 @@ func (s *Service) ReviewProof(ctx context.Context, proofID, status, reviewedBy, 
 // We derive the paid amount from the approved proofs instead of storing a
 // paid_amount column, so no schema migration is needed (code-wins decision).
 func (s *Service) ReviewProofAndSettle(ctx context.Context, invoiceID, proofID, status, reviewedBy, notes, portalBaseURL string) error {
-	if err := s.proofs.Review(ctx, proofID, status, reviewedBy, notes); err != nil {
+	// The proof has to be one of THIS invoice's. Without the check, a mistyped
+	// id settles whichever invoice was named while approving a proof that was
+	// never attached to it — money credited to the wrong participant, with both
+	// records looking plausible afterwards.
+	proof, err := s.proofs.GetByID(ctx, proofID)
+	if err != nil {
 		return err
 	}
+	if proof.InvoiceID != invoiceID {
+		return ErrProofNotForInvoice
+	}
+
 	inv, err := s.invoices.GetByID(ctx, invoiceID)
 	if err != nil {
 		return err
@@ -287,39 +312,103 @@ func (s *Service) ReviewProofAndSettle(ctx context.Context, invoiceID, proofID, 
 
 	switch status {
 	case "ditolak":
-		safe.Go("notifikasi pembayaran ditolak", func() {
-			s.notifyPaymentRejected(inv, notes, portalBaseURL)
-		})
+		if err := s.proofs.Review(ctx, proofID, status, reviewedBy, notes); err != nil {
+			return err
+		}
+		(&settlement{invoice: inv, rejected: true, reason: notes, portalBaseURL: portalBaseURL}).notify(s)
 		return nil
 	case "disetujui":
-		proofs, err := s.proofs.GetByInvoice(ctx, invoiceID)
+		settled, err := s.settleApprovedProof(ctx, s.ownRepos(), inv, proofID, reviewedBy, notes)
 		if err != nil {
 			return err
 		}
-		var paid, thisClaim float64
-		for _, p := range proofs {
-			if p.ID == proofID {
-				thisClaim = p.AmountClaimed
-			}
-			if p.Status == "disetujui" {
-				paid += p.AmountClaimed
-			}
-		}
-		fullyPaid := paid >= inv.Amount
-		if fullyPaid && inv.Status != "lunas" {
-			if err := s.invoices.Confirm(ctx, invoiceID, reviewedBy); err != nil {
-				return err
-			}
-			if err := s.participants.Activate(ctx, inv.ParticipantID); err != nil {
-				return err
-			}
-		}
-		safe.Go("notifikasi pembayaran diterima", func() {
-			s.notifyPaymentReceived(inv, thisClaim, fullyPaid, portalBaseURL)
-		})
+		settled.portalBaseURL = portalBaseURL
+		settled.notify(s)
 		return nil
 	}
 	return nil
+}
+
+// ownRepos binds the shared settlement logic to the service's own repositories,
+// for the paths that are not running inside a unit of work.
+func (s *Service) ownRepos() uow.Repos {
+	return uow.Repos{
+		Participants:  s.participants,
+		Invoices:      s.invoices,
+		Proofs:        s.proofs,
+		GatewayOrders: s.gatewayOrders,
+	}
+}
+
+// settleApprovedProof approves one proof and brings the invoice up to date: the
+// paid amount is recomputed from every approved proof, and the invoice settles
+// only once that covers it.
+//
+// Both the admin's approval and the gateway's automatic one go through here, so
+// a partial payment behaves the same whichever way it arrived.
+func (s *Service) settleApprovedProof(
+	ctx context.Context, repos uow.Repos,
+	inv *domainInvoice.Invoice, proofID, reviewedBy, notes string,
+) (*settlement, error) {
+	if err := repos.Proofs.Review(ctx, proofID, "disetujui", reviewedBy, notes); err != nil {
+		return nil, err
+	}
+	proofs, err := repos.Proofs.GetByInvoice(ctx, inv.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	var paid, thisClaim float64
+	for _, p := range proofs {
+		if p.ID == proofID {
+			thisClaim = p.AmountClaimed
+		}
+		if p.Status == "disetujui" {
+			paid += p.AmountClaimed
+		}
+	}
+
+	fullyPaid := paid >= inv.Amount
+	if fullyPaid && inv.Status != "lunas" {
+		if err := repos.Invoices.Confirm(ctx, inv.ID, reviewedBy); err != nil {
+			return nil, err
+		}
+		if err := repos.Participants.Activate(ctx, inv.ParticipantID); err != nil {
+			return nil, err
+		}
+	}
+	return &settlement{invoice: inv, amount: thisClaim, fullyPaid: fullyPaid}, nil
+}
+
+// settlement is what a completed settlement owes the outside world. It is
+// collected inside the unit and delivered after it commits, so nobody is told
+// about a payment that was rolled back.
+type settlement struct {
+	invoice       *domainInvoice.Invoice
+	amount        float64
+	fullyPaid     bool
+	rejected      bool
+	reason        string
+	portalBaseURL string
+}
+
+func (st *settlement) notify(s *Service) {
+	if st == nil {
+		return
+	}
+	base := st.portalBaseURL
+	if base == "" {
+		base = portalBaseURL()
+	}
+	if st.rejected {
+		safe.Go("notifikasi pembayaran ditolak", func() {
+			s.notifyPaymentRejected(st.invoice, st.reason, base)
+		})
+		return
+	}
+	safe.Go("notifikasi pembayaran diterima", func() {
+		s.notifyPaymentReceived(st.invoice, st.amount, st.fullyPaid, base)
+	})
 }
 
 func (s *Service) notifyPaymentReceived(inv *domainInvoice.Invoice, amountClaimed float64, fullyPaid bool, portalBaseURL string) {
@@ -386,6 +475,15 @@ func (s *Service) CreatePaymentForParticipant(ctx context.Context, invoiceID, pa
 	if err != nil {
 		return "", "", err
 	}
+	// Sessions accumulate rather than overwrite, so a payment completed in a tab
+	// opened earlier still finds its invoice.
+	if err := s.gatewayOrders.Create(ctx, &domainInvoice.GatewayOrder{
+		InvoiceID: inv.ID, OrderID: orderID, SnapToken: token,
+	}); err != nil {
+		return "", "", err
+	}
+	// The invoice's own columns stay in sync for reads that show "the current
+	// session"; the orders table is what a notification is resolved against.
 	if err := s.invoices.SetSnap(ctx, inv.ID, token, orderID); err != nil {
 		return "", "", err
 	}
@@ -395,48 +493,109 @@ func (s *Service) CreatePaymentForParticipant(ctx context.Context, invoiceID, pa
 // HandleGatewayNotification processes a verified Midtrans webhook notification.
 // Settlement auto-creates an approved payment proof and runs the normal settle
 // path (lunas/partial + portal activation + notifications).
-func (s *Service) HandleGatewayNotification(ctx context.Context, orderID, txStatus, fraudStatus, paymentType, grossAmount string) error {
-	inv, err := s.invoices.GetByOrderID(ctx, orderID)
+// HandleGatewayNotification is idempotent against the identity of the
+// transaction it reports, not against the state of the invoice.
+//
+// It used to return early only when the invoice was already "lunas". A partially
+// paid invoice is still "menunggu_bayar", so every redelivery of the same
+// settlement created another proof for the same money: four retries of one down
+// payment could settle the invoice in full without another rupiah arriving. The
+// claim below is what makes a redelivery a no-op, and it lives in the same unit
+// as the proof it authorises — a claim whose proof was never written would lose
+// a payment permanently, since the gateway would never send it again.
+func (s *Service) HandleGatewayNotification(ctx context.Context, n domainInvoice.GatewayNotification, paymentType, grossAmount, fraudStatus string) error {
+	invoiceID, err := s.gatewayOrders.FindInvoiceIDByOrder(ctx, n.OrderID)
 	if err != nil {
-		return ErrNotOwned
+		// "No such order" and "the database is unreachable" are different
+		// answers: the first is final, the second must be reported so the
+		// gateway retries instead of treating the payment as delivered.
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotOwned
+		}
+		return fmt.Errorf("resolve gateway order %q: %w", n.OrderID, err)
 	}
-	if inv.Status == "lunas" { // idempotent — already settled
-		return nil
+	n.InvoiceID = invoiceID
+
+	// Fraud review holds a transaction whatever it was paid with. The old guard
+	// excluded bank transfers, which let exactly the transactions a reviewer had
+	// flagged through untouched.
+	held := fraudStatus != "" && fraudStatus != "accept"
+
+	var settled *settlement
+	if err := s.unit.Do(ctx, func(ctx context.Context, repos uow.Repos) error {
+		claimed, err := repos.GatewayOrders.ClaimNotification(ctx, n)
+		if err != nil {
+			return err
+		}
+		if !claimed {
+			return errNotificationAlreadyApplied
+		}
+		settled, err = s.applyGatewayNotification(ctx, repos, n, paymentType, grossAmount, held)
+		return err
+	}); err != nil {
+		if errors.Is(err, errNotificationAlreadyApplied) {
+			return nil // a redelivery of something already recorded
+		}
+		return err
 	}
 
-	switch txStatus {
+	// Outside the unit: nothing here can be undone, and none of it should hold
+	// the gateway's connection open.
+	if settled != nil {
+		settled.notify(s)
+	}
+	return nil
+}
+
+// errNotificationAlreadyApplied unwinds the unit without treating the redelivery
+// as a failure — the claim is rolled back with it, which is correct: the row
+// that already held the key is the one that counts.
+var errNotificationAlreadyApplied = errors.New("gateway notification already applied")
+
+// applyGatewayNotification records what the notification says, using the
+// repositories bound to the unit.
+func (s *Service) applyGatewayNotification(
+	ctx context.Context, repos uow.Repos,
+	n domainInvoice.GatewayNotification, paymentType, grossAmount string, held bool,
+) (*settlement, error) {
+	inv, err := repos.Invoices.GetByID(ctx, n.InvoiceID)
+	if err != nil {
+		return nil, err
+	}
+
+	switch n.TransactionStatus {
 	case "settlement", "capture":
-		if fraudStatus != "" && fraudStatus != "accept" && paymentType != "bank_transfer" {
-			return nil // held by fraud review
+		if held {
+			return nil, nil
 		}
 		amount, _ := strconv.ParseFloat(strings.Split(grossAmount, ".")[0], 64)
 		pp := &domainInvoice.PaymentProof{
 			InvoiceID:     inv.ID,
 			AmountClaimed: amount,
 			FilePath:      "midtrans-auto",
+			Status:        "disetujui",
 			Notes:         "Pembayaran otomatis via Midtrans (" + paymentType + ")",
 		}
-		if err := s.proofs.Create(ctx, pp); err != nil {
-			return err
+		if err := repos.Proofs.Create(ctx, pp); err != nil {
+			return nil, err
 		}
-		// Settle as if an admin approved it; inv.IssuedBy is a valid user for confirmed_by.
-		return s.ReviewProofAndSettle(ctx, inv.ID, pp.ID, "disetujui", inv.IssuedBy, "Auto-verified Midtrans", portalBaseURL())
+		// Settled as if an admin approved it; inv.IssuedBy is a valid user id for
+		// confirmed_by.
+		return s.settleApprovedProof(ctx, repos, inv, pp.ID, inv.IssuedBy, "Auto-verified Midtrans")
 
 	case "pending":
 		inv.Status = "menunggu_konfirmasi_gateway"
-		return s.invoices.Update(ctx, inv)
+		return nil, repos.Invoices.Update(ctx, inv)
 
 	case "deny", "expire", "cancel":
 		inv.Status = "menunggu_bayar"
-		if err := s.invoices.Update(ctx, inv); err != nil {
-			return err
+		if err := repos.Invoices.Update(ctx, inv); err != nil {
+			return nil, err
 		}
-		safe.Go("notifikasi pembayaran gagal di gateway", func() {
-			s.notifyPaymentRejected(inv, "Pembayaran gagal/dibatalkan via payment gateway", portalBaseURL())
-		})
-		return nil
+		return &settlement{invoice: inv, rejected: true,
+			reason: "Pembayaran gagal/dibatalkan via payment gateway"}, nil
 	}
-	return nil
+	return nil, nil
 }
 
 func (s *Service) notifyPaymentRejected(inv *domainInvoice.Invoice, reason, portalBaseURL string) {

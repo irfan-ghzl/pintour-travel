@@ -72,6 +72,21 @@ func (r *fakeInvoiceRepo) Confirm(_ context.Context, id, userID string) error {
 func (r *fakeInvoiceRepo) ListUnpaidOlderThan(_ context.Context, _ int) ([]domainInvoice.Invoice, error) {
 	return nil, nil
 }
+func (r *fakeInvoiceRepo) GetByOrderID(_ context.Context, orderID string) (*domainInvoice.Invoice, error) {
+	for _, inv := range r.stored {
+		if inv.MidtransOrderID == orderID {
+			return inv, nil
+		}
+	}
+	return nil, fmt.Errorf("not found")
+}
+func (r *fakeInvoiceRepo) SetSnap(_ context.Context, id, token, orderID string) error {
+	if inv, ok := r.stored[id]; ok {
+		inv.SnapToken = token
+		inv.MidtransOrderID = orderID
+	}
+	return nil
+}
 
 type fakeProofRepo struct{ created int }
 
@@ -113,6 +128,10 @@ func (r *fakeParticipantRepo) Activate(_ context.Context, id string) error {
 	r.activated = id
 	return nil
 }
+func (r *fakeParticipantRepo) SetNIK(_ context.Context, _, _ string) error { return nil }
+func (r *fakeParticipantRepo) ListByPortalUser(_ context.Context, _, _ string) ([]domainParticipant.Participant, error) {
+	return nil, nil
+}
 func (r *fakeParticipantRepo) ListByBatch(_ context.Context, _ string) ([]domainParticipant.Participant, error) {
 	return nil, nil
 }
@@ -131,7 +150,7 @@ func TestCreate_GeneratesInvoiceNumber(t *testing.T) {
 	parts := &fakeParticipantRepo{}
 	fonnte := service.NewFonnteService("", nil) // no-op when token empty
 	pdf := service.NewPDFService()
-	svc := NewService(invRepo, proofs, parts, fonnte, pdf)
+	svc := NewService(invRepo, proofs, parts, nil, nil, fonnte, pdf, nil, nil)
 
 	inv := &domainInvoice.Invoice{
 		ParticipantID: "p1",
@@ -157,8 +176,8 @@ func TestCreate_GeneratesInvoiceNumber(t *testing.T) {
 
 func TestCreate_IncrementsSequence(t *testing.T) {
 	invRepo := newFakeInvoiceRepo()
-	svc := NewService(invRepo, &fakeProofRepo{}, &fakeParticipantRepo{},
-		service.NewFonnteService("", nil), service.NewPDFService())
+	svc := NewService(invRepo, &fakeProofRepo{}, &fakeParticipantRepo{}, nil, nil,
+		service.NewFonnteService("", nil), service.NewPDFService(), nil, nil)
 
 	yearMonth := time.Now().Format("200601")
 	expected := []string{
@@ -184,8 +203,8 @@ func TestCreate_IncrementsSequence(t *testing.T) {
 func TestConfirmPayment_ActivatesPortal(t *testing.T) {
 	invRepo := newFakeInvoiceRepo()
 	parts := &fakeParticipantRepo{}
-	svc := NewService(invRepo, &fakeProofRepo{}, parts,
-		service.NewFonnteService("", nil), service.NewPDFService())
+	svc := NewService(invRepo, &fakeProofRepo{}, parts, nil, nil,
+		service.NewFonnteService("", nil), service.NewPDFService(), nil, nil)
 
 	// Create first
 	inv := &domainInvoice.Invoice{
@@ -207,8 +226,8 @@ func TestConfirmPayment_ActivatesPortal(t *testing.T) {
 func TestUploadProof_TransitionsStatus(t *testing.T) {
 	invRepo := newFakeInvoiceRepo()
 	proofs := &fakeProofRepo{}
-	svc := NewService(invRepo, proofs, &fakeParticipantRepo{},
-		service.NewFonnteService("", nil), service.NewPDFService())
+	svc := NewService(invRepo, proofs, &fakeParticipantRepo{}, nil, nil,
+		service.NewFonnteService("", nil), service.NewPDFService(), nil, nil)
 
 	inv := &domainInvoice.Invoice{
 		ParticipantID: "p1", BatchID: "b1",

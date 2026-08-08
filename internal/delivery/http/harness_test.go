@@ -116,6 +116,7 @@ type harness struct {
 	Airport       *fakeAirportRepo
 	Notifications *fakeNotifRepo
 	Chatbot       *fakeChatbotRepo
+	GatewayOrders *fakeGatewayOrderRepo
 
 	// Unit runs a unit of work over the fakes above, undoing its writes when it
 	// fails — see fakeUnitOfWork for why a passthrough would not do.
@@ -193,8 +194,12 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 		Airport:       newFakeAirportRepo(),
 		Notifications: newFakeNotifRepo(),
 		Chatbot:       newFakeChatbotRepo(),
+		GatewayOrders: newFakeGatewayOrderRepo(),
 	}
-	h.Unit = &fakeUnitOfWork{participants: h.Participants, leads: h.Leads, portalUsers: h.PortalUsers}
+	h.Unit = &fakeUnitOfWork{
+		participants: h.Participants, leads: h.Leads, portalUsers: h.PortalUsers,
+		invoices: h.Invoices, proofs: h.Proofs, gatewayOrders: h.GatewayOrders,
+	}
 	h.e.HideBanner = true
 	h.e.Logger.SetOutput(io.Discard)
 
@@ -228,7 +233,8 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 
 	chatbot := service.NewChatbotService(h.Chatbot, db, h.Packages, fonnte, "", "", 0, false)
 
-	invoiceSvc := invoicesvc.NewService(h.Invoices, h.Proofs, h.Participants, fonnte, pdf, email, midtrans)
+	invoiceSvc := invoicesvc.NewService(h.Invoices, h.Proofs, h.Participants, h.GatewayOrders,
+		h.Unit, fonnte, pdf, email, midtrans)
 	leadSvc := leadsvc.NewService(h.Leads, h.Notes, h.Users, h.PortalUsers, h.Participants, fonnte, email)
 	participantSvc := participantsvc.NewService(h.Participants, h.Leads, h.PortalUsers,
 		h.Unit, h.Batches, h.Packages, invoiceSvc, h.CountryReqs, fonnte)

@@ -98,6 +98,7 @@ func main() {
 	// Runs the writes that only make sense together — currently lead conversion —
 	// as one transaction. It sits beside the repositories rather than replacing
 	// them: every single-row operation still goes through the ones above.
+	gatewayOrderRepo := postgres.NewGatewayOrderRepo(db) // v2.0 F1 — sesi Snap per invoice
 	unitOfWork := postgres.NewUnitOfWork(db)
 
 	// ── Services ──────────────────────────────────────────────────────────────
@@ -117,7 +118,8 @@ func main() {
 	leadService := leadsvc.NewService(leadRepo, noteRepo, userRepo, portalUserRepo, paxRepo, fonnteSvc, emailSvc)
 	// invoiceService is constructed before participantService because the convert
 	// flow (§1.1) reuses it to auto-generate invoices.
-	invoiceService := invoicesvc.NewService(invRepo, proofRepo, paxRepo, fonnteSvc, pdfSvc, emailSvc, midtransSvc)
+	invoiceService := invoicesvc.NewService(invRepo, proofRepo, paxRepo, gatewayOrderRepo,
+		unitOfWork, fonnteSvc, pdfSvc, emailSvc, midtransSvc)
 	participantService := participantsvc.NewService(paxRepo, leadRepo, portalUserRepo,
 		unitOfWork, batchRepo, pkgRepo, invoiceService, countryReqRepo, fonnteSvc)
 	userService := usersvc.NewUserService(userRepo, cfg.JWT.Secret, cfg.JWT.ExpirationHours)

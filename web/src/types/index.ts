@@ -182,7 +182,16 @@ export interface ConvertLeadResponse {
 
 // ─── Invoices ──��───────────────────���───────────────────────────────��──────────
 
-export type InvoiceStatus = 'diterbitkan' | 'menunggu_bayar' | 'dibayar' | 'lunas'
+// Mirrors the invoices_status_check constraint as amended by
+// db/migrations/006_v2_features.sql. menunggu_konfirmasi_gateway was missing
+// here while the backend already set it, so a participant whose payment was
+// awaiting the gateway hit an undefined lookup and the page failed to render.
+export type InvoiceStatus =
+  | 'diterbitkan'
+  | 'menunggu_bayar'
+  | 'menunggu_konfirmasi_gateway'
+  | 'dibayar'
+  | 'lunas'
 
 export interface Invoice {
   id: string
