@@ -187,16 +187,18 @@ func (h *PortalHandler) PortalMyTrips(c echo.Context) error {
 	history := []map[string]interface{}{}
 	for i := range trips {
 		t := &trips[i]
+		paymentStatus := h.tripPaymentStatus(ctx, t.ID)
 		card := map[string]interface{}{
 			"participant_id": t.ID,
 			"package_name":   t.PackageName,
 			"room_type":      t.RoomType,
 			"departure_date": t.BatchDepartureDate,
 			"is_active":      t.IsActive,
-			"payment_status": h.tripPaymentStatus(ctx, t.ID),
+			"payment_status": paymentStatus,
 		}
 		isHistory := t.BatchDepartureDate != nil && t.BatchDepartureDate.Before(now)
 		if isHistory {
+			card["completion_status"] = tripCompletionStatus(paymentStatus)
 			history = append(history, card)
 		} else {
 			active = append(active, card)
@@ -206,6 +208,27 @@ func (h *PortalHandler) PortalMyTrips(c echo.Context) error {
 		"active":  active,
 		"history": history,
 	}))
+}
+
+// Completion badges for a past trip (FR-PORTAL-09).
+const (
+	tripCompleted = "selesai"
+	tripCancelled = "dibatalkan"
+)
+
+// tripCompletionStatus decides which badge a past trip carries.
+//
+// FR-PORTAL-09 asks for "Selesai" and "Dibatalkan", and the schema has no notion
+// of a cancelled trip. Rather than add a status column nothing in the system
+// would ever set — no PRD flow cancels a participant, and no admin screen asks
+// to — the badge is derived from what the data already knows: a departure date
+// that has passed on a trip that was never paid in full is a trip that did not
+// happen. Recorded as a decision in the ticket.
+func tripCompletionStatus(paymentStatus string) string {
+	if paymentStatus == "lunas" {
+		return tripCompleted
+	}
+	return tripCancelled
 }
 
 // tripPaymentStatus summarizes the invoice state of one tour: "lunas" when any
@@ -248,6 +271,62 @@ func (h *PortalHandler) PortalTripInvoicePDF(c echo.Context) error {
 	c.Response().Header().Set("Content-Type", "application/pdf")
 	c.Response().Header().Set("Content-Disposition", "attachment; filename=invoice.pdf")
 	return c.Blob(http.StatusOK, "application/pdf", pdfBytes)
+}
+
+// PortalTripItinerary returns the itinerary of any tour owned by the logged-in
+// portal identity, past ones included (FR-PORTAL-10).
+//
+// The ownership check is the same one the invoice download uses, and it is here
+// rather than in a shared wrapper because it has to run before anything about
+// the trip is read — an unowned trip must not even reveal which package it was.
+func (h *PortalHandler) PortalTripItinerary(c echo.Context) error {
+	ctx := c.Request().Context()
+	participantID := c.Param("participant_id")
+
+	owned, err := portalOwnsParticipant(c, h.participants, participantID)
+	if err != nil {
+		return serverErr(c, err)
+	}
+	if !owned {
+		return notFound(c, "perjalanan tidak ditemukan")
+	}
+
+	p, err := h.participants.GetParticipant(ctx, participantID)
+	if err != nil {
+		return notFound(c, "perjalanan tidak ditemukan")
+	}
+	return h.itineraryOf(c, p)
+}
+
+// PortalConsultationPrefill returns the participant's own details for the public
+// consultation form (FR-PORTAL-12).
+//
+// It is an endpoint rather than something the browser remembers because the
+// values have to be the ones the system holds now — a name corrected by an admin
+// last week should arrive corrected, and a room type read from localStorage
+// could be two tours out of date. Returning-customer status is deliberately NOT
+// part of this: the lead endpoint decides that from the phone number itself, so
+// nothing a client sends can claim it.
+func (h *PortalHandler) PortalConsultationPrefill(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	p, err := h.participants.GetParticipant(ctx, portalParticipantID(c))
+	if err != nil {
+		return notFound(c, "peserta tidak ditemukan")
+	}
+	// The most recent tour holds the freshest room-type preference; the token's
+	// own participant is the fallback when there is only one.
+	latest := p
+	if trips, err := portalTrips(c, h.participants); err == nil && len(trips) > 0 {
+		latest = &trips[0] // ListTrips is newest-departure-first
+	}
+
+	return c.JSON(http.StatusOK, ok(map[string]interface{}{
+		"name":      p.Name,
+		"phone":     p.Phone,
+		"email":     p.Email,
+		"room_type": latest.RoomType,
+	}))
 }
 
 // PortalInvoices returns invoices for the logged-in participant.
@@ -409,18 +488,23 @@ func (h *PortalHandler) PortalCountryRequirements(c echo.Context) error {
 
 // PortalItinerary returns the itinerary from the participant's package.
 func (h *PortalHandler) PortalItinerary(c echo.Context) error {
-	pid := portalParticipantID(c)
-	p, err := h.participants.GetParticipant(c.Request().Context(), pid)
+	p, err := h.participants.GetParticipant(c.Request().Context(), portalParticipantID(c))
 	if err != nil {
 		return notFound(c, "peserta tidak ditemukan")
 	}
+	return h.itineraryOf(c, p)
+}
 
-	// Get batch then package
-	batch, err := h.packages.GetBatch(c.Request().Context(), p.BatchID)
+// itineraryOf renders one tour's itinerary. Shared by the current tour and by
+// the archive download, so a past trip's itinerary is the same document the
+// participant saw while it was upcoming.
+func (h *PortalHandler) itineraryOf(c echo.Context, p *participant.Participant) error {
+	ctx := c.Request().Context()
+	batch, err := h.packages.GetBatch(ctx, p.BatchID)
 	if err != nil {
 		return serverErr(c, err)
 	}
-	pkg, err := h.packages.GetPackage(c.Request().Context(), batch.PackageID)
+	pkg, err := h.packages.GetPackage(ctx, batch.PackageID)
 	if err != nil {
 		return serverErr(c, err)
 	}
@@ -628,7 +712,6 @@ func portalOwnsParticipant(
 	if participantID == "" {
 		return false, nil
 	}
-	ctx := c.Request().Context()
 	// The tour the caller logged in as is theirs by definition, and answering it
 	// without a lookup keeps the common case working even when the rest is not
 	// resolvable.
@@ -636,7 +719,26 @@ func portalOwnsParticipant(
 		return true, nil
 	}
 
+	trips, err := portalTrips(c, participants)
+	if err != nil {
+		return false, err
+	}
+	for i := range trips {
+		if trips[i].ID == participantID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// portalTrips lists every tour the caller's portal identity owns, newest
+// departure first. The phone fallback covers a token issued before portal
+// identities existed; without it a customer's own history reads as somebody
+// else's.
+func portalTrips(c echo.Context, participants *participantsvc.Service) ([]participant.Participant, error) {
+	ctx := c.Request().Context()
 	puID := portalUserID(c)
+
 	phone := ""
 	if puID != "" {
 		if pu, err := participants.GetPortalUser(ctx, puID); err == nil {
@@ -649,20 +751,9 @@ func portalOwnsParticipant(
 		}
 	}
 	if puID == "" && phone == "" {
-		// Nothing identifies the caller beyond the tour already checked above.
-		return false, nil
+		return nil, nil
 	}
-
-	trips, err := participants.ListTrips(ctx, puID, phone)
-	if err != nil {
-		return false, err
-	}
-	for i := range trips {
-		if trips[i].ID == participantID {
-			return true, nil
-		}
-	}
-	return false, nil
+	return participants.ListTrips(ctx, puID, phone)
 }
 
 // PortalJWTMiddleware validates portal JWT tokens.

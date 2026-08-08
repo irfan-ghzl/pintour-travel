@@ -375,11 +375,21 @@ func (s *Service) settleApprovedProof(
 	}
 
 	fullyPaid := paid >= inv.Amount
-	if fullyPaid && inv.Status != "lunas" {
+	switch {
+	case fullyPaid && inv.Status != "lunas":
 		if err := repos.Invoices.Confirm(ctx, inv.ID, reviewedBy); err != nil {
 			return nil, err
 		}
 		if err := repos.Participants.Activate(ctx, inv.ParticipantID); err != nil {
+			return nil, err
+		}
+	case !fullyPaid && paid > 0 && inv.Status != "dibayar":
+		// FR-INV-03's sequence is diterbitkan → menunggu_bayar → dibayar → lunas,
+		// and "dibayar" was never reached: an approved-but-partial payment left
+		// the invoice on "menunggu_bayar", indistinguishable from one nobody had
+		// paid a rupiah towards. It means money accepted, balance outstanding.
+		inv.Status = "dibayar"
+		if err := repos.Invoices.Update(ctx, inv); err != nil {
 			return nil, err
 		}
 	}

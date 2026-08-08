@@ -1,8 +1,25 @@
 import { useQuery } from '@tanstack/react-query'
-import { Clock, FileText, BookOpen, CheckCircle, AlertCircle, Receipt, Shield, ChevronRight } from 'lucide-react'
+import { Clock, FileText, BookOpen, CheckCircle, AlertCircle, Receipt, Shield, ChevronRight, History, Plane, Download } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { portalApi } from '../../utils/api'
+import toast from 'react-hot-toast'
+import { portalApi, getMyTrips, downloadTripInvoice, getTripItinerary } from '../../utils/api'
 import type { PortalMeResponse, Invoice, Document } from '../../types'
+
+// downloadJSON saves an object as a file. The itinerary is structured data
+// rather than a rendered document, so the archive hands it over as-is instead of
+// inventing a layout for it here.
+function downloadJSON(data: unknown, filename: string) {
+  const href = URL.createObjectURL(
+    new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }),
+  )
+  const a = document.createElement('a')
+  a.href = href
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(href), 0)
+}
 
 interface Task {
   id: string
@@ -34,6 +51,9 @@ export default function PortalDashboardPage() {
         .then(r => r.data.data ?? []),
   })
 
+  // v2.0 F2 — riwayat perjalanan (tour aktif + lampau)
+  const { data: trips } = useQuery({ queryKey: ['portal-my-trips'], queryFn: getMyTrips })
+
   if (isLoading) return (
     <div className="space-y-4 animate-pulse">
       <div className="h-28 bg-gray-200 rounded-xl" />
@@ -58,6 +78,16 @@ export default function PortalDashboardPage() {
     return { type: t, doc: latest }
   })
   const allDocsApproved = docStatus.every(d => d.doc?.status === 'disetujui')
+
+  // §5.6 Timeline stepper: Leads → Pembayaran → Dokumen → Briefing → Keberangkatan
+  const steps = [
+    { label: 'Leads', done: true },
+    { label: 'Pembayaran', done: hasPaidInvoice },
+    { label: 'Dokumen', done: allDocsApproved },
+    { label: 'Briefing', done: !!participant?.briefing_viewed },
+    { label: 'Keberangkatan', done: countdown !== undefined && countdown <= 0 },
+  ]
+  const activeStep = steps.findIndex(s => !s.done)
 
   const tasks: Task[] = [
     {
@@ -88,8 +118,27 @@ export default function PortalDashboardPage() {
 
   const doneCount = tasks.filter(t => t.done).length
 
+  const passportExpiry = data?.passport_expiry
+  const passportExpiringSoon = data?.passport_expiring_soon
+
   return (
     <div className="space-y-4">
+      {/* FR-PORTAL-11 — peringatan masa berlaku paspor */}
+      {passportExpiringSoon && passportExpiry && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+          <AlertCircle className="text-amber-600 shrink-0 mt-0.5" size={20} />
+          <div>
+            <p className="font-semibold text-sm text-amber-800">Perhatikan masa berlaku paspor Anda</p>
+            <p className="text-xs text-amber-700 mt-0.5">
+              Paspor Anda berlaku hingga{' '}
+              <span className="font-medium">
+                {new Date(passportExpiry).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
+              </span>. Perbarui paspor sebelum mendaftar tour berikutnya — umumnya paspor harus berlaku minimal 6 bulan sebelum keberangkatan.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Welcome card */}
       <div className="bg-emerald-700 text-white rounded-xl p-5">
         <p className="text-emerald-200 text-sm mb-1">Selamat datang,</p>
@@ -116,6 +165,36 @@ export default function PortalDashboardPage() {
           </div>
         </div>
       ) : null}
+
+      {/* §5.6 Timeline Stepper */}
+      <div className="bg-white rounded-xl border p-4 overflow-x-auto">
+        <div className="flex items-center min-w-[480px]">
+          {steps.map((s, i) => {
+            const active = i === activeStep
+            return (
+              <div key={s.label} className="flex items-center flex-1 last:flex-none">
+                <div className="flex flex-col items-center">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
+                    s.done ? 'bg-emerald-500 text-white'
+                      : active ? 'bg-emerald-100 text-emerald-700 ring-2 ring-emerald-400'
+                      : 'bg-gray-100 text-gray-400'
+                  }`}>
+                    {s.done ? <CheckCircle size={16} /> : i + 1}
+                  </div>
+                  <span className={`text-[11px] mt-1 whitespace-nowrap ${
+                    active ? 'text-emerald-700 font-semibold' : s.done ? 'text-gray-600' : 'text-gray-400'
+                  }`}>
+                    {s.label}
+                  </span>
+                </div>
+                {i < steps.length - 1 && (
+                  <div className={`flex-1 h-0.5 mx-1 ${s.done ? 'bg-emerald-400' : 'bg-gray-200'}`} />
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
 
       {/* FR-PORTAL-02: Daftar Tugas / Checklist */}
       <div className="bg-white rounded-xl border p-4">
@@ -245,6 +324,84 @@ export default function PortalDashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* v2.0 F2 — Riwayat Perjalanan */}
+      {trips && trips.history.length > 0 && (
+        <div className="bg-white rounded-xl border p-4">
+          <h3 className="font-semibold text-sm text-gray-700 mb-3 flex items-center gap-2">
+            <History size={16} className="text-emerald-600" /> Riwayat Perjalanan
+          </h3>
+          <div className="space-y-2">
+            {trips.history.map(t => (
+              <div key={t.participant_id} className="flex items-center gap-3 p-2 rounded-lg border bg-gray-50">
+                <div className="w-9 h-9 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
+                  <Plane size={16} className="text-emerald-600" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-800 truncate">{t.package_name}</p>
+                  <p className="text-xs text-gray-500">
+                    {t.departure_date
+                      ? new Date(t.departure_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
+                      : 'Tanggal belum diatur'}
+                    {' · '}
+                    <span className={t.payment_status === 'lunas' ? 'text-green-600' : 'text-orange-500'}>
+                      {t.payment_status === 'lunas' ? 'Lunas' : t.payment_status}
+                    </span>
+                  </p>
+                  {/* FR-PORTAL-09: Selesai / Dibatalkan */}
+                  {t.completion_status && (
+                    <span
+                      className={`inline-block mt-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                        t.completion_status === 'selesai'
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : 'bg-gray-200 text-gray-600'
+                      }`}
+                    >
+                      {t.completion_status === 'selesai' ? 'Selesai' : 'Dibatalkan'}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={() => downloadTripInvoice(t.participant_id)}
+                    className="flex items-center gap-1 text-xs text-emerald-700 hover:text-emerald-800 px-2 py-1 rounded hover:bg-emerald-50"
+                  >
+                    <Download size={14} /> Invoice
+                  </button>
+                  {/* FR-PORTAL-10: the archive is the itinerary too, not just the bill. */}
+                  <button
+                    onClick={() =>
+                      getTripItinerary(t.participant_id)
+                        .then(it => downloadJSON(it, `itinerary-${t.participant_id.slice(0, 8)}.json`))
+                        .catch(() => toast.error('Gagal mengunduh itinerary'))
+                    }
+                    className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-100"
+                  >
+                    <Download size={14} /> Itinerary
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* v2.0 F3 — Konsultasi tour berikutnya (returning customer) */}
+      <Link
+        to="/"
+        className="block bg-gradient-to-r from-emerald-600 to-emerald-700 text-white rounded-xl p-4 hover:from-emerald-700 hover:to-emerald-800 transition-colors"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-white/20 flex items-center justify-center shrink-0">
+            <Plane size={20} />
+          </div>
+          <div className="flex-1">
+            <p className="font-semibold text-sm">Konsultasi Tour Berikutnya</p>
+            <p className="text-emerald-100 text-xs">Lihat paket terbaru — akun Anda tetap sama, tidak perlu daftar ulang</p>
+          </div>
+          <ChevronRight size={18} className="text-emerald-200" />
+        </div>
+      </Link>
     </div>
   )
 }

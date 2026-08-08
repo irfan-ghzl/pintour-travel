@@ -124,6 +124,8 @@ func RegisterRoutes(e *echo.Echo, svc Services) {
 	portal.GET("/me", portalH.PortalMe)
 	portal.GET("/my-trips", portalH.PortalMyTrips)                                    // v2.0 F2 riwayat perjalanan
 	portal.GET("/my-trips/:participant_id/invoice-pdf", portalH.PortalTripInvoicePDF) // v2.0 F2 download artefak lama
+	portal.GET("/my-trips/:participant_id/itinerary", portalH.PortalTripItinerary)    // FR-PORTAL-10
+	portal.GET("/consultation-prefill", portalH.PortalConsultationPrefill)            // FR-PORTAL-12
 	portal.PUT("/profile", portalH.PortalUpdateProfile)                               // §15.4 portal-profile
 	portal.GET("/my-data", portalH.PortalMyData)                                      // §25.5 Right to Access
 	portal.POST("/account-deletion-request", portalH.PortalRequestDeletion)           // §25.5 Right to Erasure
