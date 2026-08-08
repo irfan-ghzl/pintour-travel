@@ -91,7 +91,7 @@ func (h *DocumentHandler) ListAllDocuments(c echo.Context) error {
 func (h *DocumentHandler) UploadDocument(c echo.Context) error {
 	var d document.Document
 	if err := bindJSON(c, &d); err != nil {
-		return badRequest(c, "format tidak valid")
+		return invalidPayload(c, err, "format tidak valid")
 	}
 	d.ParticipantID = c.Param("participant_id")
 	if err := h.docs.Create(c.Request().Context(), &d); err != nil {
@@ -129,17 +129,11 @@ func (h *DocumentHandler) GetOCRResult(c echo.Context) error {
 // @Router       /admin/documents/{id}/review [patch]
 func (h *DocumentHandler) ReviewDocument(c echo.Context) error {
 	var body struct {
-		Status          string `json:"status"`
-		RejectionReason string `json:"rejection_reason"`
+		Status          string `json:"status" validate:"required,oneof=disetujui ditolak"`
+		RejectionReason string `json:"rejection_reason" validate:"required_if=Status ditolak"`
 	}
 	if err := bindJSON(c, &body); err != nil {
-		return badRequest(c, "format tidak valid")
-	}
-	if body.Status != "disetujui" && body.Status != "ditolak" {
-		return badRequest(c, "status harus 'disetujui' atau 'ditolak'")
-	}
-	if body.Status == "ditolak" && body.RejectionReason == "" {
-		return badRequest(c, "alasan penolakan harus diisi saat menolak dokumen")
+		return invalidPayload(c, err, "status harus 'disetujui' atau 'ditolak'")
 	}
 	docID := c.Param("id")
 	if err := h.docs.Review(c.Request().Context(), docID, body.Status, claimUserID(c), body.RejectionReason); err != nil {
@@ -294,10 +288,7 @@ func (h *DocumentHandler) ListAllCountryRequirements(c echo.Context) error {
 func (h *DocumentHandler) CreateCountryRequirement(c echo.Context) error {
 	var req document.CountryRequirement
 	if err := bindJSON(c, &req); err != nil {
-		return badRequest(c, "format tidak valid")
-	}
-	if req.CountryCode == "" || req.DocumentType == "" {
-		return badRequest(c, "country_code dan document_type harus diisi")
+		return invalidPayload(c, err, "country_code dan document_type harus diisi")
 	}
 	if err := h.reqs.Create(c.Request().Context(), &req); err != nil {
 		return serverErr(c, err)
@@ -308,7 +299,7 @@ func (h *DocumentHandler) CreateCountryRequirement(c echo.Context) error {
 func (h *DocumentHandler) UpdateCountryRequirement(c echo.Context) error {
 	var req document.CountryRequirement
 	if err := bindJSON(c, &req); err != nil {
-		return badRequest(c, "format tidak valid")
+		return invalidPayload(c, err, "format tidak valid")
 	}
 	req.ID = c.Param("id")
 	if err := h.reqs.Update(c.Request().Context(), &req); err != nil {

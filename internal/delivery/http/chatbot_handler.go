@@ -90,7 +90,7 @@ func (h *ChatbotHandler) ListConversations(c echo.Context) error {
 		DateFrom: c.QueryParam("from"),
 		DateTo:   c.QueryParam("to"),
 		Page:     queryInt(c, "page", 1),
-		Limit:    queryInt(c, "limit", 20),
+		Limit:    queryPageSize(c, "limit", 20),
 	}
 	list, total, err := h.logs.ListConversations(c.Request().Context(), f)
 	if err != nil {
@@ -121,15 +121,12 @@ func (h *ChatbotHandler) GetConversation(c echo.Context) error {
 //	@Router   /admin/chatbot-logs/{phone}/create-lead [post]
 func (h *ChatbotHandler) CreateLeadFromChat(c echo.Context) error {
 	var body struct {
-		Name      string `json:"name"`
-		PackageID string `json:"package_id"`
-		Pax       int    `json:"pax"`
+		Name      string `json:"name" validate:"required"`
+		PackageID string `json:"package_id" validate:"required"`
+		Pax       int    `json:"pax" validate:"omitempty,gte=1"`
 	}
 	if err := bindJSON(c, &body); err != nil {
-		return badRequest(c, "format tidak valid")
-	}
-	if body.Name == "" || body.PackageID == "" {
-		return badRequest(c, "name dan package_id harus diisi")
+		return invalidPayload(c, err, "name dan package_id harus diisi")
 	}
 	if body.Pax < 1 {
 		body.Pax = 1

@@ -231,14 +231,14 @@ func (h *AirportHandler) GetReportPDF(c echo.Context) error {
 // @Router       /admin/airport/confirm-departure [post]
 func (h *AirportHandler) ConfirmDeparture(c echo.Context) error {
 	var body struct {
-		BatchID      string `json:"batch_id"`
-		GatherPoint  string `json:"gather_point"`
-		GatherTime   string `json:"gather_time"`
-		Gate         string `json:"gate"`
-		CheckinTime  string `json:"checkin_time"`
+		BatchID     string `json:"batch_id" validate:"required"`
+		GatherPoint string `json:"gather_point"`
+		GatherTime  string `json:"gather_time"`
+		Gate        string `json:"gate"`
+		CheckinTime string `json:"checkin_time"`
 	}
-	if err := bindJSON(c, &body); err != nil || body.BatchID == "" {
-		return badRequest(c, "batch_id harus diisi")
+	if err := bindJSON(c, &body); err != nil {
+		return invalidPayload(c, err, "batch_id harus diisi")
 	}
 
 	// Get all participants in this batch

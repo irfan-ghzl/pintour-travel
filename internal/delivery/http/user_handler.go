@@ -43,11 +43,8 @@ func NewUserHandler(svc *usersvc.UserService, repo domainUser.Repository, email 
 
 func (h *UserHandler) Login(c echo.Context) error {
 	var req usersvc.LoginRequest
-	if err := c.Bind(&req); err != nil {
-		return badRequest(c, "format tidak valid")
-	}
-	if req.Email == "" || req.Password == "" {
-		return badRequest(c, "email dan password harus diisi")
+	if err := bindJSON(c, &req); err != nil {
+		return invalidPayload(c, err, "email dan password harus diisi")
 	}
 	resp, statusCode, err := h.svc.Login(c.Request().Context(), req)
 	if err != nil {
@@ -185,9 +182,11 @@ func (s *resetTokenStore) startSweeper(every time.Duration) {
 // @Success      200 {object} map[string]interface{}
 // @Router       /auth/forgot-password [post]
 func (h *UserHandler) ForgotPassword(c echo.Context) error {
-	var body struct{ Email string `json:"email"` }
-	if err := bindJSON(c, &body); err != nil || body.Email == "" {
-		return badRequest(c, "email harus diisi")
+	var body struct {
+		Email string `json:"email" validate:"required,email"`
+	}
+	if err := bindJSON(c, &body); err != nil {
+		return invalidPayload(c, err, "email harus diisi")
 	}
 	u, err := h.repo.GetByEmail(c.Request().Context(), body.Email)
 	if err != nil || u == nil {
@@ -222,14 +221,11 @@ func (h *UserHandler) ForgotPassword(c echo.Context) error {
 // @Router       /auth/reset-password [post]
 func (h *UserHandler) ResetPassword(c echo.Context) error {
 	var body struct {
-		Token    string `json:"token"`
-		Password string `json:"password"`
+		Token    string `json:"token" validate:"required"`
+		Password string `json:"password" validate:"required,min=8"`
 	}
-	if err := bindJSON(c, &body); err != nil || body.Token == "" || body.Password == "" {
-		return badRequest(c, "token dan password baru harus diisi")
-	}
-	if len(body.Password) < 8 {
-		return badRequest(c, "password minimal 8 karakter")
+	if err := bindJSON(c, &body); err != nil {
+		return invalidPayload(c, err, "token dan password baru harus diisi")
 	}
 
 	entry, found := resetTokens.consume(body.Token, time.Now())
@@ -299,17 +295,14 @@ func (h *UserHandler) CreateUser(c echo.Context) error {
 		return forbidden(c)
 	}
 	var body struct {
-		Name     string `json:"name"`
-		Email    string `json:"email"`
-		Password string `json:"password"`
-		Role     string `json:"role"`
-		Phone    string `json:"phone"`
+		Name     string `json:"name" validate:"required"`
+		Email    string `json:"email" validate:"required,email"`
+		Password string `json:"password" validate:"required,min=8"`
+		Role     string `json:"role" validate:"required,staff_role"`
+		Phone    string `json:"phone" validate:"omitempty,phone_id"`
 	}
 	if err := bindJSON(c, &body); err != nil {
-		return badRequest(c, "format tidak valid")
-	}
-	if body.Name == "" || body.Email == "" || body.Password == "" || body.Role == "" {
-		return badRequest(c, "nama, email, password, dan role harus diisi")
+		return invalidPayload(c, err, "nama, email, password, dan role harus diisi")
 	}
 	hashed, err := bcrypt.GenerateFromPassword([]byte(body.Password), 12)
 	if err != nil {
@@ -342,12 +335,12 @@ func (h *UserHandler) UpdateUser(c echo.Context) error {
 	}
 	var body struct {
 		Name  string `json:"name"`
-		Email string `json:"email"`
-		Role  string `json:"role"`
-		Phone string `json:"phone"`
+		Email string `json:"email" validate:"omitempty,email"`
+		Role  string `json:"role" validate:"omitempty,staff_role"`
+		Phone string `json:"phone" validate:"omitempty,phone_id"`
 	}
 	if err := bindJSON(c, &body); err != nil {
-		return badRequest(c, "format tidak valid")
+		return invalidPayload(c, err, "format tidak valid")
 	}
 	if body.Name != "" {
 		existing.Name = body.Name
@@ -396,10 +389,10 @@ func (h *UserHandler) ResetPasswordAdmin(c echo.Context) error {
 		return forbidden(c)
 	}
 	var body struct {
-		Password string `json:"password"`
+		Password string `json:"password" validate:"required,min=8"`
 	}
-	if err := bindJSON(c, &body); err != nil || body.Password == "" {
-		return badRequest(c, "password baru harus diisi")
+	if err := bindJSON(c, &body); err != nil {
+		return invalidPayload(c, err, "password baru harus diisi")
 	}
 	hashed, err := bcrypt.GenerateFromPassword([]byte(body.Password), 12)
 	if err != nil {

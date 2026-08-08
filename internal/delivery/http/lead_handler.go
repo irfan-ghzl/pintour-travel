@@ -1,6 +1,7 @@
 package httpdelivery
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -28,17 +29,21 @@ func NewLeadHandler(svc *leadsvc.Service, notifRepo notification.Repository) *Le
 func (h *LeadHandler) CreateLead(c echo.Context) error {
 	var l domainLead.Lead
 	if err := bindJSON(c, &l); err != nil {
-		return badRequest(c, "format request tidak valid")
+		return invalidPayload(c, err, "nama, nomor WA, dan paket harus diisi")
 	}
-	if l.Name == "" || l.Phone == "" || l.PackageID == "" {
-		return badRequest(c, "nama, nomor WA, dan paket harus diisi")
+	// The tag accepts 08…, 62…, and +62…; everything downstream expects the 62…
+	// form, so normalise once here.
+	l.Phone = normalizePhone(l.Phone)
+	// The column defaults to 1, but the repository writes this field explicitly,
+	// so an omitted pax would reach Postgres as 0 and break its CHECK.
+	if l.Pax == 0 {
+		l.Pax = 1
 	}
-	// Validate phone format
-	phone := normalizePhone(l.Phone)
-	if len(phone) < 10 || phone[:2] != "62" {
-		return badRequest(c, "Nomor WhatsApp tidak valid. Harus diawali 08 atau +62")
-	}
-	l.Phone = phone
+
+	// F4: returning-customer status is decided server-side by phone, never trusted
+	// from the client (the prefilled portal form only carries name/phone/email).
+	l.PortalUserID = nil
+	l.IsReturning = false
 
 	if err := h.svc.CreateLead(c.Request().Context(), &l); err != nil {
 		return serverErr(c, err)
@@ -66,7 +71,7 @@ func (h *LeadHandler) CreateLead(c echo.Context) error {
 func (h *LeadHandler) ListLeads(c echo.Context) error {
 	f := domainLead.Filter{
 		Page:    queryInt(c, "page", 1),
-		PerPage: queryInt(c, "per_page", 20),
+		PerPage: queryPageSize(c, "per_page", 20),
 	}
 	if v := c.QueryParam("status"); v != "" { f.Status = &v }
 	if v := c.QueryParam("assigned_to"); v != "" { f.AssignedTo = &v }
@@ -119,10 +124,19 @@ func (h *LeadHandler) GetLead(c echo.Context) error {
 		waLog, _ = h.notifRepo.ListByReference(c.Request().Context(), l.ID, "lead")
 	}
 
+	// F4: returning customer — surface previous tours in the lead detail panel.
+	var previousTrips interface{}
+	if l.IsReturning {
+		if trips, err := h.svc.PreviousTrips(c.Request().Context(), l); err == nil {
+			previousTrips = trips
+		}
+	}
+
 	return c.JSON(http.StatusOK, ok(map[string]interface{}{
-		"lead":         l,
-		"activity_log": notes,
-		"wa_log":       waLog,
+		"lead":           l,
+		"activity_log":   notes,
+		"wa_log":         waLog,
+		"previous_trips": previousTrips,
 	}))
 }
 
@@ -136,14 +150,17 @@ func (h *LeadHandler) GetLead(c echo.Context) error {
 // @Router       /admin/leads/{id}/status [patch]
 func (h *LeadHandler) UpdateStatus(c echo.Context) error {
 	var body struct {
-		Status string `json:"status"`
+		Status string `json:"status" validate:"required,lead_status"`
 	}
-	if err := bindJSON(c, &body); err != nil || body.Status == "" {
-		return badRequest(c, "status harus diisi")
+	if err := bindJSON(c, &body); err != nil {
+		return invalidPayload(c, err, "status harus diisi")
 	}
 
 	changedBy := claimUserID(c)
 	if err := h.svc.UpdateStatus(c.Request().Context(), c.Param("id"), body.Status, changedBy); err != nil {
+		if errors.Is(err, domainLead.ErrInvalidStatus) {
+			return badRequest(c, err.Error())
+		}
 		return serverErr(c, err)
 	}
 
@@ -168,10 +185,10 @@ func (h *LeadHandler) UpdateStatus(c echo.Context) error {
 // @Router       /admin/leads/{id}/assign [patch]
 func (h *LeadHandler) AssignLead(c echo.Context) error {
 	var body struct {
-		ConsultantID string `json:"consultant_id"`
+		ConsultantID string `json:"consultant_id" validate:"required"`
 	}
-	if err := bindJSON(c, &body); err != nil || body.ConsultantID == "" {
-		return badRequest(c, "consultant_id harus diisi")
+	if err := bindJSON(c, &body); err != nil {
+		return invalidPayload(c, err, "consultant_id harus diisi")
 	}
 
 	changedBy := claimUserID(c)
@@ -201,10 +218,7 @@ func (h *LeadHandler) AssignLead(c echo.Context) error {
 func (h *LeadHandler) AddNote(c echo.Context) error {
 	var note domainLead.Note
 	if err := bindJSON(c, &note); err != nil {
-		return badRequest(c, "format tidak valid")
-	}
-	if note.Note == "" {
-		return badRequest(c, "catatan tidak boleh kosong")
+		return invalidPayload(c, err, "catatan tidak boleh kosong")
 	}
 	note.LeadID = c.Param("id")
 	note.UserID = claimUserID(c)

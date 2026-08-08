@@ -25,7 +25,7 @@ func NewInvoiceHandler(svc *invoicesvc.Service) *InvoiceHandler { return &Invoic
 func (h *InvoiceHandler) ListInvoices(c echo.Context) error {
 	f := domainInvoice.Filter{
 		Page:    queryInt(c, "page", 1),
-		PerPage: queryInt(c, "per_page", 20),
+		PerPage: queryPageSize(c, "per_page", 20),
 	}
 	if v := c.QueryParam("status"); v != "" { f.Status = &v }
 	if v := c.QueryParam("participant_id"); v != "" { f.ParticipantID = &v }
@@ -83,7 +83,7 @@ func (h *InvoiceHandler) GetInvoicePDF(c echo.Context) error {
 func (h *InvoiceHandler) CreateInvoice(c echo.Context) error {
 	var inv domainInvoice.Invoice
 	if err := bindJSON(c, &inv); err != nil {
-		return badRequest(c, "format tidak valid")
+		return invalidPayload(c, err, "format tidak valid")
 	}
 	inv.IssuedBy = claimUserID(c)
 	if err := h.svc.Create(c.Request().Context(), &inv); err != nil {
@@ -123,7 +123,7 @@ func (h *InvoiceHandler) ConfirmPayment(c echo.Context) error {
 func (h *InvoiceHandler) UploadProof(c echo.Context) error {
 	var proof domainInvoice.PaymentProof
 	if err := bindJSON(c, &proof); err != nil {
-		return badRequest(c, "format tidak valid")
+		return invalidPayload(c, err, "format tidak valid")
 	}
 	proof.InvoiceID = c.Param("id")
 	if err := h.svc.UploadProof(c.Request().Context(), &proof); err != nil {
@@ -143,13 +143,20 @@ func (h *InvoiceHandler) UploadProof(c echo.Context) error {
 // @Router       /admin/invoices/{id}/proofs/{proof_id}/review [patch]
 func (h *InvoiceHandler) ReviewProof(c echo.Context) error {
 	var body struct {
-		Status string `json:"status"`
-		Notes  string `json:"notes"`
+		Status string `json:"status" validate:"required,oneof=disetujui ditolak"`
+		Notes  string `json:"notes" validate:"required_if=Status ditolak"`
 	}
 	if err := bindJSON(c, &body); err != nil {
-		return badRequest(c, "format tidak valid")
+		return invalidPayload(c, err, "status harus 'disetujui' atau 'ditolak'")
 	}
-	if err := h.svc.ReviewProof(c.Request().Context(), c.Param("proof_id"), body.Status, claimUserID(c), body.Notes); err != nil {
+	portalBase := os.Getenv("PORTAL_BASE_URL")
+	if portalBase == "" {
+		portalBase = "http://localhost:3000"
+	}
+	// §1.4 + §1.3: settle payment (derive paid amount, activate portal when lunas)
+	// and notify the participant.
+	if err := h.svc.ReviewProofAndSettle(c.Request().Context(), c.Param("id"), c.Param("proof_id"),
+		body.Status, claimUserID(c), body.Notes, portalBase); err != nil {
 		return serverErr(c, err)
 	}
 	return c.JSON(http.StatusOK, ok(nil))

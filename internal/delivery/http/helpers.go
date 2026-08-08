@@ -96,6 +96,23 @@ func queryInt(c echo.Context, name string, defaultVal int) int {
 	return v
 }
 
+// maxPerPage caps how many rows one request may ask a list endpoint for
+// (§19.3). Without a ceiling a client can ask for a whole table in one query and
+// make the server materialise it.
+const maxPerPage = 100
+
+// queryPageSize reads a page-size parameter, falling back to defaultVal when it
+// is absent or unreadable, and clamping anything above maxPerPage down to it. It
+// clamps rather than refuses: an over-large page is a caller asking for too much
+// of a resource they are entitled to, not a malformed request, and the response
+// reports the size actually served in its meta.
+func queryPageSize(c echo.Context, name string, defaultVal int) int {
+	if v := queryInt(c, name, defaultVal); v <= maxPerPage {
+		return v
+	}
+	return maxPerPage
+}
+
 func queryStringPtr(c echo.Context, name string) *string {
 	v := c.QueryParam(name)
 	if v == "" {

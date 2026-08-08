@@ -65,6 +65,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -438,6 +439,38 @@ func (r *response) decode(dest any) {
 	if err := json.Unmarshal(r.Body, dest); err != nil {
 		r.t.Fatalf("%s %s: decode body: %v (body: %s)", r.method, r.path, err, r.Body)
 	}
+}
+
+// message returns the human-readable message of an error envelope.
+func (r *response) message() string {
+	r.t.Helper()
+	var envelope struct {
+		Message string `json:"message"`
+	}
+	r.decode(&envelope)
+	return envelope.Message
+}
+
+// expectMessageMentions fails the test unless the error message names field —
+// how a validation 400 is told apart from a generic one.
+func (r *response) expectMessageMentions(field string) *response {
+	r.t.Helper()
+	if msg := r.message(); !strings.Contains(msg, field) {
+		r.t.Errorf("%s %s: pesan %q tidak menyebut %q", r.method, r.path, msg, field)
+	}
+	return r
+}
+
+// metaLimit returns the page size the server reported in the pagination meta.
+func (r *response) metaLimit() int {
+	r.t.Helper()
+	var envelope struct {
+		Meta struct {
+			Limit int `json:"limit"`
+		} `json:"meta"`
+	}
+	r.decode(&envelope)
+	return envelope.Meta.Limit
 }
 
 // data decodes the standard {"success":…,"data":…} envelope and returns data.

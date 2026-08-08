@@ -97,14 +97,11 @@ func portalAppURL() string {
 // @Router       /portal/login [post]
 func (h *PortalHandler) PortalLogin(c echo.Context) error {
 	var body struct {
-		Phone    string `json:"phone"`
-		Password string `json:"password"`
+		Phone    string `json:"phone" validate:"required,phone_id"`
+		Password string `json:"password" validate:"required"`
 	}
 	if err := bindJSON(c, &body); err != nil {
-		return badRequest(c, "format tidak valid")
-	}
-	if body.Phone == "" || body.Password == "" {
-		return badRequest(c, "nomor WA dan password harus diisi")
+		return invalidPayload(c, err, "nomor WA dan password harus diisi")
 	}
 	// Normalize phone
 	phone := normalizePhone(body.Phone)
@@ -306,7 +303,7 @@ func (h *PortalHandler) PortalInvoicePDF(c echo.Context) error {
 func (h *PortalHandler) PortalUploadProof(c echo.Context) error {
 	var pp invoice.PaymentProof
 	if err := bindJSON(c, &pp); err != nil {
-		return badRequest(c, "format tidak valid")
+		return invalidPayload(c, err, "format tidak valid")
 	}
 	pp.InvoiceID = c.Param("id")
 	pid := portalParticipantID(c)
@@ -374,7 +371,7 @@ func (h *PortalHandler) PortalUploadDocument(c echo.Context) error {
 	pid := portalParticipantID(c)
 	var d document.Document
 	if err := bindJSON(c, &d); err != nil {
-		return badRequest(c, "format tidak valid")
+		return invalidPayload(c, err, "format tidak valid")
 	}
 	d.ParticipantID = pid
 	if err := h.docs.Create(c.Request().Context(), &d); err != nil {
@@ -523,10 +520,10 @@ func (h *PortalHandler) PortalUpdateProfile(c echo.Context) error {
 	pid := portalParticipantID(c)
 	var body struct {
 		Name  string `json:"name"`
-		Email string `json:"email"`
+		Email string `json:"email" validate:"omitempty,email"`
 	}
 	if err := bindJSON(c, &body); err != nil {
-		return badRequest(c, "format tidak valid")
+		return invalidPayload(c, err, "format tidak valid")
 	}
 	p, err := h.participants.GetParticipant(c.Request().Context(), pid)
 	if err != nil {

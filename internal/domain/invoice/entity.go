@@ -3,21 +3,29 @@ package invoice
 import "time"
 
 // Invoice is the billing document for a participant.
+//
+// The validate tags apply when a request binds into this type (PRD §19.3). The
+// status vocabulary mirrors the invoices_status_check constraint as amended by
+// db/migrations/006_v2_features.sql; it is omitempty because Service.Create
+// issues every invoice as "diterbitkan" regardless of what the caller sent.
 type Invoice struct {
-	ID            string     `json:"id"`
-	InvoiceNumber string     `json:"invoice_number"`
-	ParticipantID string     `json:"participant_id"`
-	BatchID       string     `json:"batch_id"`
-	Amount        float64    `json:"amount"`
-	DueDate       time.Time  `json:"due_date"`
-	Status        string     `json:"status"`
-	PDFPath       string     `json:"pdf_path"`
-	Notes         string     `json:"notes"`
-	IssuedBy      string     `json:"issued_by"`
-	ConfirmedBy   *string    `json:"confirmed_by,omitempty"`
-	ConfirmedAt   *time.Time `json:"confirmed_at,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	ID            string    `json:"id"`
+	InvoiceNumber string    `json:"invoice_number"`
+	ParticipantID string    `json:"participant_id" validate:"required"`
+	BatchID       string    `json:"batch_id" validate:"required"`
+	Amount        float64   `json:"amount" validate:"required,gt=0"`
+	DueDate       time.Time `json:"due_date" validate:"required"`
+	Status        string    `json:"status" validate:"omitempty,oneof=diterbitkan menunggu_bayar dibayar lunas menunggu_konfirmasi_gateway"`
+	PDFPath       string    `json:"pdf_path"`
+	Notes         string    `json:"notes"`
+	// Midtrans (v2.0 F1) — populated by GetByOrderID; written via SetSnap.
+	SnapToken       string     `json:"snap_token,omitempty"`
+	MidtransOrderID string     `json:"midtrans_order_id,omitempty"`
+	IssuedBy        string     `json:"issued_by"`
+	ConfirmedBy     *string    `json:"confirmed_by,omitempty"`
+	ConfirmedAt     *time.Time `json:"confirmed_at,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 	// Joined
 	ParticipantName  string `json:"participant_name,omitempty"`
 	ParticipantPhone string `json:"participant_phone,omitempty"`
@@ -29,10 +37,10 @@ type Invoice struct {
 type PaymentProof struct {
 	ID            string     `json:"id"`
 	InvoiceID     string     `json:"invoice_id"`
-	FilePath      string     `json:"file_path"`
-	AmountClaimed float64    `json:"amount_claimed"`
+	FilePath      string     `json:"file_path" validate:"required"`
+	AmountClaimed float64    `json:"amount_claimed" validate:"required,gt=0"`
 	Notes         string     `json:"notes"`
-	Status        string     `json:"status"`
+	Status        string     `json:"status" validate:"omitempty,oneof=menunggu disetujui ditolak"`
 	ReviewedBy    *string    `json:"reviewed_by,omitempty"`
 	ReviewNotes   string     `json:"review_notes"`
 	UploadedAt    time.Time  `json:"uploaded_at"`

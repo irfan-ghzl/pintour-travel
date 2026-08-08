@@ -12,6 +12,10 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// dummyBcryptHash is a valid bcrypt hash (cost 12) of an arbitrary string,
+// used to equalize login timing when the supplied email does not exist.
+const dummyBcryptHash = "$2b$12$ev6WdpzmJ5M1FbM4AASRRuz3ih/M0KYrT0aoG4wFqM2gRj.rWbo8q"
+
 // UserService handles authentication use cases.
 type UserService struct {
 	repo      user.Repository
@@ -30,8 +34,8 @@ func NewUserService(repo user.Repository, jwtSecret string, jwtExpiryHours int) 
 
 // LoginRequest holds credentials for login.
 type LoginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required"`
 }
 
 // LoginResponse is returned on successful login.
@@ -50,6 +54,9 @@ func (s *UserService) Login(ctx context.Context, req LoginRequest) (*LoginRespon
 		return nil, http.StatusInternalServerError, fmt.Errorf("login query: %w", err)
 	}
 	if u == nil {
+		// Perform a dummy bcrypt comparison so the response time is the same
+		// whether or not the email exists, preventing user enumeration via timing.
+		_ = bcrypt.CompareHashAndPassword([]byte(dummyBcryptHash), []byte(req.Password))
 		return nil, http.StatusUnauthorized, fmt.Errorf("invalid credentials")
 	}
 
