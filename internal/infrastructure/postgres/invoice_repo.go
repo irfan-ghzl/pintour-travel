@@ -44,7 +44,7 @@ func (r *invoiceRepo) GetByID(ctx context.Context, id string) (*invoice.Invoice,
 		JOIN package_batches pb ON pb.id=i.batch_id
 		JOIN packages pkg ON pkg.id=pb.package_id
 		JOIN users u ON u.id=i.issued_by
-		WHERE i.id=$1`, id)
+		WHERE i.id=$1 AND i.deleted_at IS NULL`, id)
 }
 
 func (r *invoiceRepo) GetByNumber(ctx context.Context, number string) (*invoice.Invoice, error) {
@@ -58,7 +58,7 @@ func (r *invoiceRepo) GetByNumber(ctx context.Context, number string) (*invoice.
 		JOIN package_batches pb ON pb.id=i.batch_id
 		JOIN packages pkg ON pkg.id=pb.package_id
 		JOIN users u ON u.id=i.issued_by
-		WHERE i.invoice_number=$1`, number)
+		WHERE i.invoice_number=$1 AND i.deleted_at IS NULL`, number)
 }
 
 func (r *invoiceRepo) scan(ctx context.Context, q string, arg interface{}) (*invoice.Invoice, error) {
@@ -76,7 +76,10 @@ func (r *invoiceRepo) scan(ctx context.Context, q string, arg interface{}) (*inv
 }
 
 func (r *invoiceRepo) List(ctx context.Context, f invoice.Filter) ([]invoice.Invoice, int, error) {
-	where := "WHERE 1=1"
+	// Soft-deleted invoices are hidden from every listing, matching every other
+	// repository. This one was the only reader that never filtered its own
+	// deleted_at column, so a deleted invoice still chased the participant.
+	where := "WHERE i.deleted_at IS NULL"
 	args := []interface{}{}
 	i := 1
 
@@ -144,6 +147,29 @@ func (r *invoiceRepo) List(ctx context.Context, f invoice.Filter) ([]invoice.Inv
 	return list, total, rows.Err()
 }
 
+// GetByOrderID looks up an invoice by its Midtrans order id (v2.0 F1).
+func (r *invoiceRepo) GetByOrderID(ctx context.Context, orderID string) (*invoice.Invoice, error) {
+	return r.scan(ctx, `
+		SELECT i.id,i.invoice_number,i.participant_id,i.batch_id,i.amount,i.due_date,i.status,
+		COALESCE(i.pdf_path,''),COALESCE(i.notes,''),i.issued_by,i.confirmed_by,i.confirmed_at,
+		i.created_at,i.updated_at,
+		p.name,p.phone,pkg.name,u.name
+		FROM invoices i
+		JOIN participants p ON p.id=i.participant_id
+		JOIN package_batches pb ON pb.id=i.batch_id
+		JOIN packages pkg ON pkg.id=pb.package_id
+		JOIN users u ON u.id=i.issued_by
+		WHERE i.midtrans_order_id=$1 AND i.deleted_at IS NULL`, orderID)
+}
+
+// SetSnap stores the Snap token + order id for an invoice (v2.0 F1).
+func (r *invoiceRepo) SetSnap(ctx context.Context, id, snapToken, orderID string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE invoices SET snap_token=$1,midtrans_order_id=$2,updated_at=NOW() WHERE id=$3`,
+		snapToken, orderID, id)
+	return err
+}
+
 func (r *invoiceRepo) Confirm(ctx context.Context, id, confirmedBy string) error {
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE invoices SET status='lunas',confirmed_by=$1,confirmed_at=NOW(),updated_at=NOW()
@@ -180,7 +206,7 @@ func (r *invoiceRepo) ListUnpaidOlderThan(ctx context.Context, days int) ([]invo
 		JOIN package_batches pb ON pb.id=i.batch_id
 		JOIN packages pkg ON pkg.id=pb.package_id
 		JOIN users u ON u.id=i.issued_by
-		WHERE i.status IN ('diterbitkan','menunggu_bayar')
+		WHERE i.deleted_at IS NULL AND i.status IN ('diterbitkan','menunggu_bayar')
 		AND i.created_at < NOW() - ($1 || ' days')::interval
 		ORDER BY i.created_at`, days)
 	if err != nil {
@@ -239,7 +265,7 @@ func scanProof(src proofScanner, pp *invoice.PaymentProof) error {
 func (r *paymentProofRepo) GetByID(ctx context.Context, id string) (*invoice.PaymentProof, error) {
 	var pp invoice.PaymentProof
 	row := r.db.QueryRowContext(ctx,
-		`SELECT `+proofCols+` FROM payment_proofs WHERE id=$1`, id)
+		`SELECT `+proofCols+` FROM payment_proofs WHERE id=$1 AND deleted_at IS NULL`, id)
 	if err := scanProof(row, &pp); err != nil {
 		return nil, err
 	}
@@ -248,7 +274,8 @@ func (r *paymentProofRepo) GetByID(ctx context.Context, id string) (*invoice.Pay
 
 func (r *paymentProofRepo) GetByInvoice(ctx context.Context, invoiceID string) ([]invoice.PaymentProof, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT `+proofCols+` FROM payment_proofs WHERE invoice_id=$1 ORDER BY uploaded_at`, invoiceID)
+		`SELECT `+proofCols+` FROM payment_proofs WHERE invoice_id=$1 AND deleted_at IS NULL
+		 ORDER BY uploaded_at`, invoiceID)
 	if err != nil {
 		return nil, err
 	}

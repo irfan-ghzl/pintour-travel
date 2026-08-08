@@ -139,7 +139,9 @@ func (s *Service) ConvertFromLead(ctx context.Context, leadID, batchID, roomType
 		if err := repos.Participants.Create(ctx, p); err != nil {
 			return err
 		}
-		if err := repos.Leads.MarkConverted(ctx, leadID); err != nil {
+		// Recorded in the status trail as deal → peserta by whoever converted it
+		// (FR-CRM-02), inside the same unit as the rest of the conversion.
+		if err := repos.Leads.MarkConverted(ctx, leadID, issuedBy); err != nil {
 			return err
 		}
 		res.Participant = p

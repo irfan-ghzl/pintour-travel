@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Search, RefreshCw, ChevronRight, UserPlus, MessageSquare, Activity } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../../utils/api'
-import type { Lead, LeadStatus, LeadNote, PaginatedResponse, WANotification } from '../../types'
+import type { Lead, LeadStatus, LeadNote, LeadStatusChange, PaginatedResponse, WANotification, Participant } from '../../types'
 
 const STATUS_COLORS: Record<LeadStatus, string> = {
   baru: 'bg-blue-100 text-blue-700',
@@ -18,6 +18,12 @@ const STATUS_FLOW: Partial<Record<LeadStatus, LeadStatus>> = {
   baru: 'dihubungi',
   dihubungi: 'konsultasi',
   konsultasi: 'deal',
+}
+
+// isStale flags leads still 'baru' after 24h (§5.5) — pairs with the backend
+// checkStaleLeads job that nudges the assigned consultant.
+function isStale(lead: Lead) {
+  return lead.status === 'baru' && Date.now() - new Date(lead.created_at).getTime() > 24 * 60 * 60 * 1000
 }
 
 const STATUS_OPTIONS: { value: LeadStatus | ''; label: string }[] = [
@@ -56,7 +62,13 @@ export default function AdminLeadsPage() {
   const { data: leadDetail } = useQuery({
     queryKey: ['lead-detail', selectedLead?.id],
     queryFn: () =>
-      api.get<{ success: boolean; data: { lead: Lead; activity_log: LeadNote[]; wa_log: WANotification[] } }>(
+      api.get<{ success: boolean; data: {
+        lead: Lead
+        activity_log: LeadNote[]
+        status_history: LeadStatusChange[]
+        wa_log: WANotification[]
+        previous_trips: Participant[] | null
+      } }>(
         `/admin/leads/${selectedLead!.id}`
       ).then(r => r.data.data),
     enabled: !!selectedLead?.id,
@@ -87,7 +99,30 @@ export default function AdminLeadsPage() {
   const leads = data?.data ?? []
   const meta = data?.meta
   const activityLog = leadDetail?.activity_log ?? []
+  const statusHistory = leadDetail?.status_history ?? []
   const waLog = leadDetail?.wa_log ?? []
+
+  // FR-CRM-02: the status trail and the consultant's notes are one timeline for
+  // the reader even though they are two records for the system — reading either
+  // alone loses the thread of what happened to the lead.
+  const timeline = [
+    ...activityLog.map(n => ({
+      id: `note-${n.id}`,
+      kind: 'note' as const,
+      at: n.created_at,
+      who: n.user_name,
+      text: n.note,
+    })),
+    ...statusHistory.map(s => ({
+      id: `status-${s.id}`,
+      kind: 'status' as const,
+      at: s.changed_at,
+      who: s.changed_by_name,
+      text: s.from_status
+        ? `Status: ${s.from_status} → ${s.to_status}`
+        : `Status: ${s.to_status}`,
+    })),
+  ].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
 
   return (
     <div className="space-y-4">
@@ -168,15 +203,35 @@ export default function AdminLeadsPage() {
             ) : leads.map(lead => (
               <tr key={lead.id} className="hover:bg-gray-50 transition-colors">
                 <td className="px-4 py-3">
-                  <p className="font-medium text-gray-800">{lead.name}</p>
+                  <div className="flex items-center gap-1.5">
+                    <p className="font-medium text-gray-800">{lead.name}</p>
+                    {lead.is_returning && (
+                      <span
+                        className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-blue-100 text-blue-700"
+                        title="Sudah pernah ikut tour — gunakan akun portal yang sama"
+                      >
+                        ⭐ Pelanggan Lama
+                      </span>
+                    )}
+                  </div>
                   <p className="text-gray-500 text-xs">{lead.phone}</p>
                 </td>
                 <td className="px-4 py-3 text-gray-600 max-w-xs truncate text-xs">{lead.package_name}</td>
                 <td className="px-4 py-3 text-gray-600 text-xs">{lead.pax} orang</td>
                 <td className="px-4 py-3">
-                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLORS[lead.status]}`}>
-                    {lead.status.replace('_', ' ')}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLORS[lead.status]}`}>
+                      {lead.status.replace('_', ' ')}
+                    </span>
+                    {isStale(lead) && (
+                      <span
+                        className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-red-100 text-red-700 animate-pulse"
+                        title="Belum direspons lebih dari 24 jam"
+                      >
+                        ⚠️ 24 jam
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td className="px-4 py-3 text-gray-500 text-xs">{lead.assignee_name ?? '—'}</td>
                 <td className="px-4 py-3 text-gray-400 text-xs">
@@ -241,7 +296,7 @@ export default function AdminLeadsPage() {
             <div className="flex border-b text-sm">
               {[
                 { id: 'detail' as const, label: 'Detail', icon: MessageSquare, count: 0 },
-                { id: 'log' as const, label: 'Log Aktivitas', icon: Activity, count: activityLog.length },
+                { id: 'log' as const, label: 'Log Aktivitas', icon: Activity, count: timeline.length },
                 { id: 'wa' as const, label: 'Riwayat WA', icon: MessageSquare, count: waLog.length },
               ].map(tab => (
                 <button
@@ -273,6 +328,27 @@ export default function AdminLeadsPage() {
                     </div>
                   )}
                 </div>
+
+                {/* v2.0 F4 — Riwayat tour sebelumnya (returning customer) */}
+                {leadDetail?.previous_trips && leadDetail.previous_trips.length > 0 && (
+                  <div className="bg-blue-50 border border-blue-100 rounded-lg p-3">
+                    <p className="font-medium text-xs text-blue-700 mb-2 flex items-center gap-1">
+                      ⭐ Pelanggan Lama — {leadDetail.previous_trips.length} tour sebelumnya
+                    </p>
+                    <div className="space-y-1.5">
+                      {leadDetail.previous_trips.map(t => (
+                        <div key={t.id} className="text-xs text-gray-600 flex justify-between gap-2">
+                          <span className="truncate">{t.package_name}</span>
+                          <span className="text-gray-400 shrink-0">
+                            {t.batch_departure_date
+                              ? new Date(t.batch_departure_date).toLocaleDateString('id-ID', { month: 'short', year: 'numeric' })
+                              : '—'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Quick status update */}
                 <div className="flex gap-2 flex-wrap">
@@ -329,18 +405,22 @@ export default function AdminLeadsPage() {
 
             {activeTab === 'log' && (
               <div className="space-y-2 max-h-80 overflow-y-auto">
-                {activityLog.length === 0 ? (
+                {timeline.length === 0 ? (
                   <p className="text-sm text-gray-400 text-center py-6">Belum ada aktivitas tercatat</p>
                 ) : (
-                  [...activityLog].reverse().map(log => (
-                    <div key={log.id} className="flex gap-2 text-sm">
-                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 mt-1.5 shrink-0" />
+                  timeline.map(entry => (
+                    <div key={entry.id} className="flex gap-2 text-sm">
+                      <div
+                        className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${
+                          entry.kind === 'status' ? 'bg-sky-400' : 'bg-emerald-400'
+                        }`}
+                      />
                       <div>
-                        <p className={`${log.note.startsWith('[SISTEM]') ? 'text-gray-500 italic text-xs' : 'text-gray-700'}`}>
-                          {log.note.replace('[SISTEM] ', '')}
+                        <p className={entry.kind === 'status' ? 'text-gray-500 text-xs' : 'text-gray-700'}>
+                          {entry.text}
                         </p>
                         <p className="text-xs text-gray-400 mt-0.5">
-                          {log.user_name} · {new Date(log.created_at).toLocaleDateString('id-ID', {
+                          {entry.who} · {new Date(entry.at).toLocaleDateString('id-ID', {
                             day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
                           })}
                         </p>

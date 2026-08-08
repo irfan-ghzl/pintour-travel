@@ -34,7 +34,7 @@ func (r *airportRepo) GetByParticipant(ctx context.Context, participantID, batch
 		FROM airport_checklists ac
 		JOIN participants p ON p.id=ac.participant_id
 		LEFT JOIN users u ON u.id=ac.handled_by
-		WHERE ac.participant_id=$1 AND ac.batch_id=$2`, participantID, batchID,
+		WHERE ac.participant_id=$1 AND ac.batch_id=$2 AND ac.deleted_at IS NULL`, participantID, batchID,
 	).Scan(&c.ID, &c.ParticipantID, &c.BatchID,
 		&c.BaggageChecked, &c.BaggageCheckedAt,
 		&c.TicketDistributed, &c.TicketDistributedAt,
@@ -57,7 +57,7 @@ func (r *airportRepo) ListByBatch(ctx context.Context, f airport.Filter) ([]airp
 		FROM airport_checklists ac
 		JOIN participants p ON p.id=ac.participant_id
 		LEFT JOIN users u ON u.id=ac.handled_by
-		WHERE ac.batch_id=$1`
+		WHERE ac.batch_id=$1 AND ac.deleted_at IS NULL`
 	args := []interface{}{f.BatchID}
 	if f.Status != nil {
 		switch *f.Status {
@@ -104,14 +104,16 @@ func (r *airportRepo) UpdatePassport(ctx context.Context, participantID, batchID
 }
 
 func (r *airportRepo) GetBatchProgress(ctx context.Context, batchID string) (*airport.BatchProgress, error) {
-	var bp airport.BatchProgress
+	// NB: do NOT select $1::text here. The single placeholder is also compared
+	// against batch_id (uuid); forcing it to text makes pgx infer text for the
+	// whole param and Postgres rejects "uuid = text". Set BatchID in Go instead.
+	bp := airport.BatchProgress{BatchID: batchID}
 	err := r.db.QueryRowContext(ctx, `
-		SELECT $1::text,
-		COUNT(*),
+		SELECT COUNT(*),
 		COUNT(*) FILTER(WHERE baggage_checked AND ticket_distributed AND passport_returned),
 		COUNT(*) FILTER(WHERE NOT (baggage_checked AND ticket_distributed AND passport_returned))
-		FROM airport_checklists WHERE batch_id=$1`, batchID,
-	).Scan(&bp.BatchID, &bp.TotalPax, &bp.DoneCount, &bp.PendingCount)
+		FROM airport_checklists WHERE batch_id=$1 AND deleted_at IS NULL`, batchID,
+	).Scan(&bp.TotalPax, &bp.DoneCount, &bp.PendingCount)
 	if err != nil {
 		return nil, err
 	}

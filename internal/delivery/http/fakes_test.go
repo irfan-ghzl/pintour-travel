@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -288,6 +289,10 @@ type fakeLeadRepo struct {
 	fakeErr
 	leads map[string]*domainLead.Lead
 	order []string
+	// history is the lead_status_history table: every transition, with its
+	// actor. Written by the same call that changes the status, as the Postgres
+	// repository's chained CTE does.
+	history []domainLead.StatusChange
 	// StatusChanges records every UpdateStatus call, including the actor, so
 	// audit-trail expectations can be asserted without a database.
 	StatusChanges []LeadStatusChange
@@ -398,9 +403,41 @@ func (r *fakeLeadRepo) UpdateStatus(_ context.Context, id, status, changedBy str
 	r.StatusChanges = append(r.StatusChanges, LeadStatusChange{
 		LeadID: id, From: l.Status, To: status, ChangedBy: changedBy,
 	})
+	r.recordStatusChange(id, l.Status, status, changedBy)
 	l.Status = status
 	l.UpdatedAt = time.Now()
 	return nil
+}
+
+// recordStatusChange appends the history row the status update writes with it.
+func (r *fakeLeadRepo) recordStatusChange(leadID, from, to, changedBy string) {
+	name := domainLead.SystemActor
+	if changedBy != "" {
+		name = changedBy
+	}
+	r.history = append(r.history, domainLead.StatusChange{
+		ID:         fmt.Sprintf("status-change-%d", len(r.history)+1),
+		LeadID:     leadID,
+		FromStatus: from,
+		ToStatus:   to,
+		ChangedBy:  changedBy,
+		ChangedAt:  time.Now(),
+		// The Postgres query joins the actor's name; the id is enough here.
+		ChangedByName: name,
+	})
+}
+
+func (r *fakeLeadRepo) ListStatusHistory(_ context.Context, leadID string) ([]domainLead.StatusChange, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	out := []domainLead.StatusChange{}
+	for _, c := range r.history {
+		if c.LeadID == leadID {
+			out = append(out, c)
+		}
+	}
+	return out, nil
 }
 
 func (r *fakeLeadRepo) AssignTo(_ context.Context, leadID, consultantID string) error {
@@ -415,7 +452,7 @@ func (r *fakeLeadRepo) AssignTo(_ context.Context, leadID, consultantID string) 
 	return nil
 }
 
-func (r *fakeLeadRepo) MarkConverted(_ context.Context, leadID string) error {
+func (r *fakeLeadRepo) MarkConverted(_ context.Context, leadID, changedBy string) error {
 	if r.markConvertedErr != nil {
 		return r.markConvertedErr
 	}
@@ -431,6 +468,7 @@ func (r *fakeLeadRepo) MarkConverted(_ context.Context, leadID string) error {
 	if l.Status != "deal" {
 		return domainLead.ErrNotConvertible
 	}
+	r.recordStatusChange(leadID, l.Status, "peserta", changedBy)
 	now := time.Now()
 	l.ConvertedAt = &now
 	l.Status = "peserta"
@@ -453,9 +491,12 @@ func (r *fakeLeadRepo) CountActiveByConsultant(_ context.Context, consultantID s
 func (r *fakeLeadRepo) snapshot() func() {
 	restoreRows := snapshotRows(&r.leads, &r.order)
 	changes := append([]LeadStatusChange{}, r.StatusChanges...)
+	// The history table is inside the unit too: a rolled-back conversion left no
+	// status change, so the trail must not claim one happened.
+	history := append([]domainLead.StatusChange{}, r.history...)
 	return func() {
 		restoreRows()
-		r.StatusChanges = changes
+		r.StatusChanges, r.history = changes, history
 	}
 }
 
@@ -734,7 +775,6 @@ type fakeInvoiceRepo struct {
 	fakeErr
 	invoices map[string]*domainInvoice.Invoice
 	order    []string
-	nextSeq  int
 }
 
 func newFakeInvoiceRepo() *fakeInvoiceRepo {
@@ -772,12 +812,21 @@ func (r *fakeInvoiceRepo) Update(_ context.Context, inv *domainInvoice.Invoice) 
 	return nil
 }
 
+// SoftDelete marks an invoice deleted the way a delete endpoint would, so a test
+// can ask what the rest of the system does with it afterwards.
+func (r *fakeInvoiceRepo) SoftDelete(id string) {
+	if inv, ok := r.invoices[id]; ok {
+		now := time.Now()
+		inv.DeletedAt = &now
+	}
+}
+
 func (r *fakeInvoiceRepo) GetByID(_ context.Context, id string) (*domainInvoice.Invoice, error) {
 	if r.err != nil {
 		return nil, r.err
 	}
 	inv, ok := r.invoices[id]
-	if !ok {
+	if !ok || inv.DeletedAt != nil {
 		return nil, errNotFound
 	}
 	return inv, nil
@@ -802,6 +851,9 @@ func (r *fakeInvoiceRepo) List(_ context.Context, f domainInvoice.Filter) ([]dom
 	out := []domainInvoice.Invoice{}
 	for _, id := range r.order {
 		inv := r.invoices[id]
+		if inv.DeletedAt != nil {
+			continue
+		}
 		if f.Status != nil && inv.Status != *f.Status {
 			continue
 		}
@@ -828,12 +880,25 @@ func (r *fakeInvoiceRepo) Confirm(_ context.Context, id, confirmedBy string) err
 	return nil
 }
 
-func (r *fakeInvoiceRepo) NextSequence(_ context.Context, _ string) (int, error) {
+// NextSequence mirrors the Postgres query: the highest sequence yet used in the
+// month, plus one — counting soft-deleted rows, so a deleted invoice's number is
+// never handed out again (§13.7). A counter that only saw live rows would give
+// the deleted one's number straight back.
+func (r *fakeInvoiceRepo) NextSequence(_ context.Context, yearMonth string) (int, error) {
 	if r.err != nil {
 		return 0, r.err
 	}
-	r.nextSeq++
-	return r.nextSeq, nil
+	prefix := "INV-" + yearMonth + "-"
+	maxSeq := 0
+	for _, inv := range r.invoices {
+		if !strings.HasPrefix(inv.InvoiceNumber, prefix) {
+			continue
+		}
+		if seq, err := strconv.Atoi(strings.TrimPrefix(inv.InvoiceNumber, prefix)); err == nil && seq > maxSeq {
+			maxSeq = seq
+		}
+	}
+	return maxSeq + 1, nil
 }
 
 func (r *fakeInvoiceRepo) ListUnpaidOlderThan(_ context.Context, _ int) ([]domainInvoice.Invoice, error) {

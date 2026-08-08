@@ -1,6 +1,7 @@
 package httpdelivery
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -73,10 +74,18 @@ func (h *LeadHandler) ListLeads(c echo.Context) error {
 		Page:    queryInt(c, "page", 1),
 		PerPage: queryPageSize(c, "per_page", 20),
 	}
-	if v := c.QueryParam("status"); v != "" { f.Status = &v }
-	if v := c.QueryParam("assigned_to"); v != "" { f.AssignedTo = &v }
-	if v := c.QueryParam("package_id"); v != "" { f.PackageID = &v }
-	if v := c.QueryParam("search"); v != "" { f.Search = &v }
+	if v := c.QueryParam("status"); v != "" {
+		f.Status = &v
+	}
+	if v := c.QueryParam("assigned_to"); v != "" {
+		f.AssignedTo = &v
+	}
+	if v := c.QueryParam("package_id"); v != "" {
+		f.PackageID = &v
+	}
+	if v := c.QueryParam("search"); v != "" {
+		f.Search = &v
+	}
 	// FR-CRM-05: filter rentang tanggal masuk
 	if v := c.QueryParam("date_from"); v != "" {
 		if t, err := time.Parse("2006-01-02", v); err == nil {
@@ -132,9 +141,13 @@ func (h *LeadHandler) GetLead(c echo.Context) error {
 		}
 	}
 
+	// FR-CRM-02: the status trail sits beside the notes rather than inside them.
+	statusHistory, _ := h.svc.ListStatusHistory(c.Request().Context(), l.ID)
+
 	return c.JSON(http.StatusOK, ok(map[string]interface{}{
 		"lead":           l,
 		"activity_log":   notes,
+		"status_history": statusHistory,
 		"wa_log":         waLog,
 		"previous_trips": previousTrips,
 	}))
@@ -156,21 +169,20 @@ func (h *LeadHandler) UpdateStatus(c echo.Context) error {
 		return invalidPayload(c, err, "status harus diisi")
 	}
 
-	changedBy := claimUserID(c)
-	if err := h.svc.UpdateStatus(c.Request().Context(), c.Param("id"), body.Status, changedBy); err != nil {
-		if errors.Is(err, domainLead.ErrInvalidStatus) {
+	// The repository records who made the change as part of making it (FR-CRM-02).
+	// A synthetic "[SISTEM] Status diubah…" note used to stand in for that trail:
+	// it could not carry the previous status, it was written by a second call
+	// that might not happen, and it buried the consultant's own notes among
+	// entries nobody wrote. The history row replaces it.
+	if err := h.svc.UpdateStatus(c.Request().Context(), c.Param("id"), body.Status, claimUserID(c)); err != nil {
+		switch {
+		case errors.Is(err, domainLead.ErrInvalidStatus):
 			return badRequest(c, err.Error())
+		case errors.Is(err, sql.ErrNoRows):
+			return notFound(c, "leads tidak ditemukan")
 		}
 		return serverErr(c, err)
 	}
-
-	// Auto-log status change as a note
-	note := &domainLead.Note{
-		LeadID:    c.Param("id"),
-		UserID:    changedBy,
-		Note:      fmt.Sprintf("[SISTEM] Status diubah menjadi '%s' pada %s", body.Status, time.Now().Format("02 Jan 2006 15:04")),
-	}
-	_ = h.svc.AddNote(c.Request().Context(), note)
 
 	return c.JSON(http.StatusOK, ok(map[string]string{"status": body.Status}))
 }

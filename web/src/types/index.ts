@@ -106,6 +106,8 @@ export interface Lead {
   status: LeadStatus
   assigned_to?: string
   converted_at?: string
+  portal_user_id?: string // v2.0 F4
+  is_returning?: boolean  // v2.0 F4 — returning customer
   created_at: string
   updated_at: string
   package_name: string
@@ -119,6 +121,21 @@ export interface LeadNote {
   note: string
   created_at: string
   user_name: string
+}
+
+// LeadStatusChange is one recorded transition (FR-CRM-02). It is separate from
+// LeadNote because a note is something a consultant wrote and a status change is
+// something that happened — and only the latter knows what the previous status
+// was. changed_by is empty when the nightly job made the change; changed_by_name
+// then reads "Sistem".
+export interface LeadStatusChange {
+  id: string
+  lead_id: string
+  from_status: string
+  to_status: string
+  changed_by: string
+  changed_by_name: string
+  changed_at: string
 }
 
 export interface CreateLeadRequest {
@@ -159,6 +176,7 @@ export interface ConvertLeadRequest {
 export interface ConvertLeadResponse {
   participant: Participant
   temp_password: string
+  reused_account: boolean // v2.0 F1 — true bila akun portal lama dipakai ulang
   message: string
 }
 
@@ -358,4 +376,6 @@ export interface PortalMeResponse {
   participant: Participant
   days_to_depart?: number
   briefing_active: boolean
+  passport_expiry?: string         // v2.0 FR-PORTAL-11 (YYYY-MM-DD)
+  passport_expiring_soon?: boolean // expired or within 6 months
 }

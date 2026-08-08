@@ -26,6 +26,10 @@ type Invoice struct {
 	ConfirmedAt     *time.Time `json:"confirmed_at,omitempty"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
+	// DeletedAt marks a soft-deleted invoice (§13.1). Every read filters it out;
+	// invoice numbering deliberately does not, so a deleted invoice's number is
+	// never handed to a later one (§13.7).
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 	// Joined
 	ParticipantName  string `json:"participant_name,omitempty"`
 	ParticipantPhone string `json:"participant_phone,omitempty"`
@@ -45,6 +49,8 @@ type PaymentProof struct {
 	ReviewNotes   string     `json:"review_notes"`
 	UploadedAt    time.Time  `json:"uploaded_at"`
 	ReviewedAt    *time.Time `json:"reviewed_at,omitempty"`
+	// DeletedAt marks a soft-deleted proof (§13.1 / ERD §14.1).
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 }
 
 // Filter for listing invoices.

@@ -158,6 +158,12 @@ func (s *Service) ListNotes(ctx context.Context, leadID string) ([]domainLead.No
 	return s.notes.ListByLead(ctx, leadID)
 }
 
+// ListStatusHistory returns the lead's status transitions (FR-CRM-02), which the
+// admin activity log shows beside the consultant's notes.
+func (s *Service) ListStatusHistory(ctx context.Context, leadID string) ([]domainLead.StatusChange, error) {
+	return s.leads.ListStatusHistory(ctx, leadID)
+}
+
 func coalesce(s, def string) string {
 	if s == "" {
 		return def

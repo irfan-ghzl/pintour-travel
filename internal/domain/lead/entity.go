@@ -62,6 +62,30 @@ type Note struct {
 	UserName  string    `json:"user_name,omitempty"`
 }
 
+// StatusChange is one recorded transition of a lead's status (FR-CRM-02).
+//
+// It sits beside Note rather than inside it: a consultant's note is something a
+// person chose to write, a status change is something that happened. Folding the
+// second into the first — which is what the synthetic "[SISTEM] Status diubah"
+// note used to do — loses the distinction and cannot record the previous status.
+type StatusChange struct {
+	ID         string `json:"id"`
+	LeadID     string `json:"lead_id"`
+	FromStatus string `json:"from_status"`
+	ToStatus   string `json:"to_status"`
+	// ChangedBy is the staff user who made the change, empty when the scheduler
+	// did (see SystemActor).
+	ChangedBy string    `json:"changed_by"`
+	ChangedAt time.Time `json:"changed_at"`
+	// Joined
+	ChangedByName string `json:"changed_by_name,omitempty"`
+}
+
+// SystemActor is the name reported for a change nobody made by hand — the
+// nightly job that expires stale leads. Stored as a NULL actor; rendered as this
+// so the trail reads the same whoever is looking at it.
+const SystemActor = "Sistem"
+
 // Filter for listing leads.
 type Filter struct {
 	Status     *string
