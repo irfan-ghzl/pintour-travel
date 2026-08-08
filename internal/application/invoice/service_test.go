@@ -79,6 +79,9 @@ func (r *fakeProofRepo) Create(_ context.Context, _ *domainInvoice.PaymentProof)
 	r.created++
 	return nil
 }
+func (r *fakeProofRepo) GetByID(_ context.Context, _ string) (*domainInvoice.PaymentProof, error) {
+	return nil, nil
+}
 func (r *fakeProofRepo) GetByInvoice(_ context.Context, _ string) ([]domainInvoice.PaymentProof, error) {
 	return nil, nil
 }

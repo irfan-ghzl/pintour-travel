@@ -16,6 +16,7 @@ type Repository interface {
 
 type PaymentProofRepository interface {
 	Create(ctx context.Context, pp *PaymentProof) error
+	GetByID(ctx context.Context, id string) (*PaymentProof, error)
 	GetByInvoice(ctx context.Context, invoiceID string) ([]PaymentProof, error)
 	Review(ctx context.Context, id, status, reviewedBy, notes string) error
 }

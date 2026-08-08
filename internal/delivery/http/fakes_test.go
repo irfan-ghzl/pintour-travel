@@ -17,7 +17,7 @@ package httpdelivery
 
 import (
 	"context"
-	"errors"
+	"database/sql"
 	"fmt"
 	"sort"
 	"strings"
@@ -35,9 +35,11 @@ import (
 	domainUser "github.com/irfan-ghzl/pintour-travel/internal/domain/user"
 )
 
-// errNotFound is what every fake returns for a missing row, mirroring the
-// "no rows" error the Postgres repositories surface.
-var errNotFound = errors.New("not found")
+// errNotFound is what every fake returns for a missing row. It IS the error the
+// Postgres repositories surface — they return the driver's "no rows" unwrapped —
+// so a handler that tells a missing row apart from a broken query behaves the
+// same here as in a deployment.
+var errNotFound = sql.ErrNoRows
 
 // fakeErr is embedded by every fake so a test can force its methods to fail.
 type fakeErr struct{ err error }
@@ -145,7 +147,9 @@ func (r *fakeUserRepo) ListByRole(_ context.Context, role string) ([]domainUser.
 	}
 	out := []domainUser.User{}
 	for _, id := range r.order {
-		if u := r.users[id]; u.Role == role {
+		// Deactivated accounts are excluded, as the Postgres query does
+		// (WHERE role=$1 AND is_active=true).
+		if u := r.users[id]; u.Role == role && u.IsActive {
 			out = append(out, *u)
 		}
 	}
@@ -796,6 +800,18 @@ func (r *fakeProofRepo) Create(_ context.Context, pp *domainInvoice.PaymentProof
 	}
 	r.proofs = append(r.proofs, *pp)
 	return nil
+}
+
+func (r *fakeProofRepo) GetByID(_ context.Context, id string) (*domainInvoice.PaymentProof, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	for i := range r.proofs {
+		if r.proofs[i].ID == id {
+			return &r.proofs[i], nil
+		}
+	}
+	return nil, errNotFound
 }
 
 func (r *fakeProofRepo) GetByInvoice(_ context.Context, invoiceID string) ([]domainInvoice.PaymentProof, error) {

@@ -9,8 +9,8 @@ import (
 	_ "github.com/irfan-ghzl/pintour-travel/docs"
 	invoicesvc "github.com/irfan-ghzl/pintour-travel/internal/application/invoice"
 	leadsvc "github.com/irfan-ghzl/pintour-travel/internal/application/lead"
-	participantsvc "github.com/irfan-ghzl/pintour-travel/internal/application/participant"
 	pkgsvc "github.com/irfan-ghzl/pintour-travel/internal/application/package"
+	participantsvc "github.com/irfan-ghzl/pintour-travel/internal/application/participant"
 	usersvc "github.com/irfan-ghzl/pintour-travel/internal/application/user"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/airport"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/chatbot"
@@ -82,7 +82,7 @@ func RegisterRoutes(e *echo.Echo, svc Services) {
 	docH := NewDocumentHandler(svc.Document, svc.CountryReq, svc.Participants, svc.Airport, svc.Fonnte, svc.Email, svc.OCR, svc.OCRRepo)
 	tlH := NewTourLeaderHandler(svc.TourLeaderRepo)
 	portalH := NewPortalHandler(svc.Participant, svc.Invoice, svc.Package, svc.Document, svc.CountryReq, svc.TourLeaderRepo, svc.UserRepo, svc.PDF, svc.Email, svc.OCR, svc.JWTSecret)
-	uploadH := NewUploadHandler(svc.Storage)
+	uploadH := NewUploadHandler(svc.Storage, svc.Document, svc.Invoice, svc.Participant)
 	dashH := NewDashboardHandler(svc.DB)
 	reportH := NewReportHandler(svc.DB)
 	webhookH := NewWebhookHandler(svc.Midtrans, svc.Invoice)
@@ -119,11 +119,11 @@ func RegisterRoutes(e *echo.Echo, svc Services) {
 	portal := api.Group("/portal", portalMW)
 
 	portal.GET("/me", portalH.PortalMe)
-	portal.GET("/my-trips", portalH.PortalMyTrips)                                  // v2.0 F2 riwayat perjalanan
+	portal.GET("/my-trips", portalH.PortalMyTrips)                                    // v2.0 F2 riwayat perjalanan
 	portal.GET("/my-trips/:participant_id/invoice-pdf", portalH.PortalTripInvoicePDF) // v2.0 F2 download artefak lama
-	portal.PUT("/profile", portalH.PortalUpdateProfile)         // §15.4 portal-profile
-	portal.GET("/my-data", portalH.PortalMyData)               // §25.5 Right to Access
-	portal.POST("/account-deletion-request", portalH.PortalRequestDeletion) // §25.5 Right to Erasure
+	portal.PUT("/profile", portalH.PortalUpdateProfile)                               // §15.4 portal-profile
+	portal.GET("/my-data", portalH.PortalMyData)                                      // §25.5 Right to Access
+	portal.POST("/account-deletion-request", portalH.PortalRequestDeletion)           // §25.5 Right to Erasure
 	portal.GET("/invoices", portalH.PortalInvoices)
 	portal.GET("/invoices/:id/pdf", portalH.PortalInvoicePDF)
 	portal.POST("/invoices/:id/proofs", portalH.PortalUploadProof)
@@ -138,7 +138,7 @@ func RegisterRoutes(e *echo.Echo, svc Services) {
 	// Upload endpoints (Supabase Storage §16.2)
 	portal.POST("/upload/document", uploadH.UploadDocument)
 	portal.POST("/upload/payment-proof", uploadH.UploadPaymentProof)
-	portal.GET("/signed-url", uploadH.SignedURL) // §19.2 signed URL
+	portal.GET("/signed-url", uploadH.SignedURLForPortal) // §19.2, own files only
 
 	// ── Protected admin routes (staff JWT + per-role RBAC) ─────────────────────
 	// Each group shares the /admin prefix but applies a different role allow-list
@@ -160,10 +160,18 @@ func RegisterRoutes(e *echo.Echo, svc Services) {
 	admin.GET("/auth/me", userH.Me)
 	admin.GET("/dashboard/stats", dashH.GetStats)
 	admin.GET("/dashboard/analytics", dashH.GetAnalytics) // prompt §4.3
-	// Signed URL agar staf bisa membuka file privat (dokumen peserta / bukti
-	// transfer) di bucket private Supabase — path mentah tidak bisa diakses
-	// langsung tanpa token (§19.2).
-	admin.GET("/signed-url", uploadH.SignedURL)
+	// Signed URL so staff can open a private file (participant document / bank
+	// transfer) in a private Supabase bucket; the raw path is unreadable without
+	// a token (§19.2).
+	//
+	// §5.3 does not cover this endpoint, so its group is a decision rather than a
+	// reading of the matrix: it goes on ops, alongside the document-review and
+	// invoice routes that list the very files it unlocks. A signer must not hand
+	// out more than the listings do, which is why konsultan and tour_leader — who
+	// cannot list participant documents — cannot sign one either. Recorded in
+	// .scratch/prd-alignment/issues/04-kontrol-akses.md, together with the §5.3
+	// row proposed to make the matrix cover it.
+	ops.GET("/signed-url", uploadH.SignedURLForStaff)
 	ops.GET("/reports/export", reportH.Export) // prompt §4.1/§4.2
 
 	// Chatbot logs (v2.0 F2)

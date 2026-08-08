@@ -252,6 +252,38 @@ func (h *UserHandler) ResetPassword(c echo.Context) error {
 
 // ── User Management (FR-USER-03) ──────────────────────────────────────────────
 
+// roleSuperAdmin is the only role §5.3 lets manage users — including the only
+// role that can create another super admin.
+const roleSuperAdmin = "super_admin"
+
+// isLastSuperAdmin reports whether userID is the only active super admin left.
+//
+// An organisation with no active super admin cannot get one back: creating a
+// user requires a super admin, so the state is unrecoverable through the
+// application. Both operations that could produce it — demoting and deactivating
+// — check this first.
+func (h *UserHandler) isLastSuperAdmin(ctx context.Context, userID string) (bool, error) {
+	supers, err := h.repo.ListByRole(ctx, roleSuperAdmin)
+	if err != nil {
+		return false, err
+	}
+	for _, u := range supers {
+		if u.ID != userID && u.IsActive {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// refuseLastSuperAdmin explains why the operation was refused, rather than
+// reporting a bare conflict: the caller is a super admin acting deliberately,
+// and the useful answer is what to do instead.
+func refuseLastSuperAdmin(c echo.Context, operation string) error {
+	return c.JSON(http.StatusConflict, errResponse("LAST_SUPER_ADMIN",
+		"Tidak dapat "+operation+" super admin terakhir. Sistem harus selalu punya "+
+			"minimal satu super admin aktif — angkat super admin lain lebih dulu."))
+}
+
 // ListUsers godoc
 // @Summary      Daftar pengguna sistem (FR-USER-03)
 // @Tags         users
@@ -291,7 +323,7 @@ func (h *UserHandler) ListUsers(c echo.Context) error {
 // @Success      201 {object} map[string]interface{}
 // @Router       /admin/users [post]
 func (h *UserHandler) CreateUser(c echo.Context) error {
-	if claimRole(c) != "super_admin" {
+	if claimRole(c) != roleSuperAdmin {
 		return forbidden(c)
 	}
 	var body struct {
@@ -326,7 +358,7 @@ func (h *UserHandler) CreateUser(c echo.Context) error {
 // @Success      200 {object} map[string]interface{}
 // @Router       /admin/users/{id} [put]
 func (h *UserHandler) UpdateUser(c echo.Context) error {
-	if claimRole(c) != "super_admin" {
+	if claimRole(c) != roleSuperAdmin {
 		return forbidden(c)
 	}
 	existing, err := h.repo.GetByID(c.Request().Context(), c.Param("id"))
@@ -341,6 +373,15 @@ func (h *UserHandler) UpdateUser(c echo.Context) error {
 	}
 	if err := bindJSON(c, &body); err != nil {
 		return invalidPayload(c, err, "format tidak valid")
+	}
+	if body.Role != "" && body.Role != roleSuperAdmin && existing.Role == roleSuperAdmin {
+		last, err := h.isLastSuperAdmin(c.Request().Context(), existing.ID)
+		if err != nil {
+			return serverErr(c, err)
+		}
+		if last {
+			return refuseLastSuperAdmin(c, "menurunkan peran")
+		}
 	}
 	if body.Name != "" {
 		existing.Name = body.Name
@@ -368,10 +409,24 @@ func (h *UserHandler) UpdateUser(c echo.Context) error {
 // @Success      200 {object} map[string]interface{}
 // @Router       /admin/users/{id}/deactivate [patch]
 func (h *UserHandler) DeactivateUser(c echo.Context) error {
-	if claimRole(c) != "super_admin" {
+	if claimRole(c) != roleSuperAdmin {
 		return forbidden(c)
 	}
-	if err := h.repo.Deactivate(c.Request().Context(), c.Param("id")); err != nil {
+	ctx := c.Request().Context()
+	target, err := h.repo.GetByID(ctx, c.Param("id"))
+	if err != nil {
+		return notFound(c, "pengguna tidak ditemukan")
+	}
+	if target.Role == roleSuperAdmin {
+		last, err := h.isLastSuperAdmin(ctx, target.ID)
+		if err != nil {
+			return serverErr(c, err)
+		}
+		if last {
+			return refuseLastSuperAdmin(c, "menonaktifkan")
+		}
+	}
+	if err := h.repo.Deactivate(ctx, target.ID); err != nil {
 		return serverErr(c, err)
 	}
 	return c.JSON(http.StatusOK, ok(map[string]string{"message": "Akun berhasil dinonaktifkan"}))
@@ -385,7 +440,7 @@ func (h *UserHandler) DeactivateUser(c echo.Context) error {
 // @Success      200 {object} map[string]interface{}
 // @Router       /admin/users/{id}/reset-password [patch]
 func (h *UserHandler) ResetPasswordAdmin(c echo.Context) error {
-	if claimRole(c) != "super_admin" {
+	if claimRole(c) != roleSuperAdmin {
 		return forbidden(c)
 	}
 	var body struct {

@@ -124,6 +124,22 @@ func (s *Service) GetInvoicesByParticipant(ctx context.Context, participantID st
 	return invoices, err
 }
 
+// GetProofWithOwner returns a payment proof together with the participant it
+// belongs to. A proof records only the invoice it was uploaded against, so the
+// owner has to be resolved through that invoice — which is why an access check
+// over a proof cannot be made from the proof alone.
+func (s *Service) GetProofWithOwner(ctx context.Context, proofID string) (*domainInvoice.PaymentProof, string, error) {
+	proof, err := s.proofs.GetByID(ctx, proofID)
+	if err != nil {
+		return nil, "", err
+	}
+	inv, err := s.invoices.GetByID(ctx, proof.InvoiceID)
+	if err != nil {
+		return nil, "", err
+	}
+	return proof, inv.ParticipantID, nil
+}
+
 // GeneratePDFForParticipant verifies the invoice belongs to participantID
 // before generating the PDF. Used by the participant portal to prevent IDOR.
 func (s *Service) GeneratePDFForParticipant(ctx context.Context, invoiceID, participantID string) ([]byte, error) {

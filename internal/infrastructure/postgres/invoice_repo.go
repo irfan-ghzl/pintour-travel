@@ -221,11 +221,34 @@ func (r *paymentProofRepo) Create(ctx context.Context, pp *invoice.PaymentProof)
 	).Scan(&pp.ID, &pp.UploadedAt)
 }
 
+// proofCols is the column list both proof queries select, in the order
+// scanProof reads them.
+const proofCols = `id,invoice_id,file_path,amount_claimed,COALESCE(notes,''),
+	status,reviewed_by,COALESCE(review_notes,''),uploaded_at,reviewed_at`
+
+// proofScanner is satisfied by both *sql.Row and *sql.Rows, so one scan serves
+// the single-row and the multi-row query.
+type proofScanner interface{ Scan(dest ...any) error }
+
+func scanProof(src proofScanner, pp *invoice.PaymentProof) error {
+	return src.Scan(&pp.ID, &pp.InvoiceID, &pp.FilePath, &pp.AmountClaimed,
+		&pp.Notes, &pp.Status, &pp.ReviewedBy, &pp.ReviewNotes,
+		&pp.UploadedAt, &pp.ReviewedAt)
+}
+
+func (r *paymentProofRepo) GetByID(ctx context.Context, id string) (*invoice.PaymentProof, error) {
+	var pp invoice.PaymentProof
+	row := r.db.QueryRowContext(ctx,
+		`SELECT `+proofCols+` FROM payment_proofs WHERE id=$1`, id)
+	if err := scanProof(row, &pp); err != nil {
+		return nil, err
+	}
+	return &pp, nil
+}
+
 func (r *paymentProofRepo) GetByInvoice(ctx context.Context, invoiceID string) ([]invoice.PaymentProof, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT id,invoice_id,file_path,amount_claimed,COALESCE(notes,''),
-		status,reviewed_by,COALESCE(review_notes,''),uploaded_at,reviewed_at
-		FROM payment_proofs WHERE invoice_id=$1 ORDER BY uploaded_at`, invoiceID)
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+proofCols+` FROM payment_proofs WHERE invoice_id=$1 ORDER BY uploaded_at`, invoiceID)
 	if err != nil {
 		return nil, err
 	}
@@ -233,9 +256,7 @@ func (r *paymentProofRepo) GetByInvoice(ctx context.Context, invoiceID string) (
 	var list []invoice.PaymentProof
 	for rows.Next() {
 		var pp invoice.PaymentProof
-		if err := rows.Scan(&pp.ID, &pp.InvoiceID, &pp.FilePath, &pp.AmountClaimed,
-			&pp.Notes, &pp.Status, &pp.ReviewedBy, &pp.ReviewNotes,
-			&pp.UploadedAt, &pp.ReviewedAt); err != nil {
+		if err := scanProof(rows, &pp); err != nil {
 			return nil, err
 		}
 		list = append(list, pp)

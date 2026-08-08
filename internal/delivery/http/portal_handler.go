@@ -11,8 +11,8 @@ import (
 	"github.com/labstack/echo/v4"
 
 	invoicesvc "github.com/irfan-ghzl/pintour-travel/internal/application/invoice"
-	participantsvc "github.com/irfan-ghzl/pintour-travel/internal/application/participant"
 	pkgsvc "github.com/irfan-ghzl/pintour-travel/internal/application/package"
+	participantsvc "github.com/irfan-ghzl/pintour-travel/internal/application/participant"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/document"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/invoice"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
@@ -33,8 +33,8 @@ type PortalHandler struct {
 	pdf          *service.PDFService
 	email        *service.EmailService
 	// TODO(ocr-v2.0-F3): re-enable when GCP Vision billing active
-	ocr          *service.OCRService
-	jwtSecret    string
+	ocr       *service.OCRService
+	jwtSecret string
 }
 
 func NewPortalHandler(
@@ -233,32 +233,9 @@ func (h *PortalHandler) PortalTripInvoicePDF(c echo.Context) error {
 	ctx := c.Request().Context()
 	participantID := c.Param("participant_id")
 
-	// Authorize: the requested tour must belong to this portal identity.
-	// Resolve the phone the same way PortalMyTrips does, incl. the legacy
-	// fallback for tokens without a portal_user_id — otherwise an owned trip
-	// fails the ownership check and the PDF 404s.
-	puID := portalUserID(c)
-	phone := ""
-	if puID != "" {
-		if pu, err := h.participants.GetPortalUser(ctx, puID); err == nil {
-			phone = pu.Phone
-		}
-	}
-	if phone == "" {
-		if p, err := h.participants.GetParticipant(ctx, portalParticipantID(c)); err == nil {
-			phone = p.Phone
-		}
-	}
-	trips, err := h.participants.ListTrips(ctx, puID, phone)
+	owned, err := portalOwnsParticipant(c, h.participants, participantID)
 	if err != nil {
 		return serverErr(c, err)
-	}
-	owned := false
-	for i := range trips {
-		if trips[i].ID == participantID {
-			owned = true
-			break
-		}
 	}
 	if !owned {
 		return notFound(c, "perjalanan tidak ditemukan")
@@ -307,6 +284,9 @@ func (h *PortalHandler) PortalUploadProof(c echo.Context) error {
 	}
 	pp.InvoiceID = c.Param("id")
 	pid := portalParticipantID(c)
+	if !pathBelongsToParticipant(pp.FilePath, pid) {
+		return badRequest(c, "file_path bukan berkas Anda — unggah lewat /portal/upload/payment-proof")
+	}
 	if err := h.invoices.UploadProofForParticipant(c.Request().Context(), &pp, pid); err != nil {
 		if errors.Is(err, invoicesvc.ErrNotOwned) {
 			return notFound(c, "invoice tidak ditemukan")
@@ -374,6 +354,9 @@ func (h *PortalHandler) PortalUploadDocument(c echo.Context) error {
 		return invalidPayload(c, err, "format tidak valid")
 	}
 	d.ParticipantID = pid
+	if !pathBelongsToParticipant(d.FilePath, pid) {
+		return badRequest(c, "file_path bukan berkas Anda — unggah lewat /portal/upload/document")
+	}
 	if err := h.docs.Create(c.Request().Context(), &d); err != nil {
 		return serverErr(c, err)
 	}
@@ -626,6 +609,66 @@ func portalUserID(c echo.Context) string {
 	return ""
 }
 
+// portalOwnsParticipant reports whether the tour identified by participantID
+// belongs to the portal identity on this request's token — the question behind
+// every "is this mine?" the portal has to answer, whether the thing asked for is
+// an invoice PDF or a signed URL to a passport scan.
+//
+// A returning customer's account spans several tours (v3.0), so ownership is not
+// just the participant on the token: it is every tour the portal user owns. The
+// phone fallback covers a token issued before portal identities existed —
+// without it a customer's own history would read as somebody else's.
+//
+// Note what that makes "mine": the lookup matches on portal user OR phone, so
+// two participants booked on one WhatsApp number are one identity here. That is
+// the system's own notion of a portal account — PortalLogin authenticates by
+// phone, so a shared number is a shared login — and this is the same rule
+// PortalMyTrips lists by, not a wider one introduced for files.
+func portalOwnsParticipant(
+	c echo.Context,
+	participants *participantsvc.Service,
+	participantID string,
+) (bool, error) {
+	if participantID == "" {
+		return false, nil
+	}
+	ctx := c.Request().Context()
+	// The tour the caller logged in as is theirs by definition, and answering it
+	// without a lookup keeps the common case working even when the rest is not
+	// resolvable.
+	if participantID == portalParticipantID(c) {
+		return true, nil
+	}
+
+	puID := portalUserID(c)
+	phone := ""
+	if puID != "" {
+		if pu, err := participants.GetPortalUser(ctx, puID); err == nil {
+			phone = pu.Phone
+		}
+	}
+	if phone == "" {
+		if p, err := participants.GetParticipant(ctx, portalParticipantID(c)); err == nil {
+			phone = p.Phone
+		}
+	}
+	if puID == "" && phone == "" {
+		// Nothing identifies the caller beyond the tour already checked above.
+		return false, nil
+	}
+
+	trips, err := participants.ListTrips(ctx, puID, phone)
+	if err != nil {
+		return false, err
+	}
+	for i := range trips {
+		if trips[i].ID == participantID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // PortalJWTMiddleware validates portal JWT tokens.
 func PortalJWTMiddleware(secret string) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
@@ -635,12 +678,31 @@ func PortalJWTMiddleware(secret string) echo.MiddlewareFunc {
 				return c.JSON(http.StatusUnauthorized, errResponse("UNAUTHORIZED", "Token portal diperlukan"))
 			}
 			parsed, err := jwt.ParseWithClaims(token, &portalClaims{}, func(t *jwt.Token) (interface{}, error) {
+				if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+					return nil, jwt.ErrTokenSignatureInvalid
+				}
 				return []byte(secret), nil
 			})
 			if err != nil || !parsed.Valid {
 				return c.JSON(http.StatusUnauthorized, errResponse("UNAUTHORIZED", "Token tidak valid atau kadaluarsa"))
 			}
-			c.Set("portal_claims", parsed.Claims)
+
+			// Staff tokens are signed with the same secret and carry user_id and
+			// role instead of participant_id, so they parse cleanly into these
+			// claims with the participant left empty. Refusing that here is the
+			// mirror of the staff middleware refusing a token with no user_id or
+			// role, and completes the §19.1 separation in both directions.
+			//
+			// It also refuses a token that identifies nobody at all: without this
+			// every portal handler below would run with an empty participant id
+			// and report "no rows" where it means "not authenticated".
+			claims, ok := parsed.Claims.(*portalClaims)
+			if !ok || claims.ParticipantID == "" {
+				return c.JSON(http.StatusUnauthorized,
+					errResponse("UNAUTHORIZED", "Token bukan untuk akses portal peserta"))
+			}
+
+			c.Set("portal_claims", claims)
 			return next(c)
 		}
 	}

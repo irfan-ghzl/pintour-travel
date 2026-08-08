@@ -126,6 +126,8 @@ type harnessConfig struct {
 	midtransClientKey string
 	midtransBaseURL   string
 	chatbotToken      string
+	storageBaseURL    string
+	storageServiceKey string
 }
 
 // withMidtransServer enables the payment gateway and points it at baseURL —
@@ -143,6 +145,18 @@ func withMidtransServer(baseURL string) harnessOption {
 // withChatbotToken sets the shared token the Fonnte inbound webhook checks.
 func withChatbotToken(token string) harnessOption {
 	return func(c *harnessConfig) { c.chatbotToken = token }
+}
+
+// withStorageServer enables object storage and points it at baseURL — normally
+// an httptest.Server standing in for Supabase Storage. Without this option the
+// adapter stays unconfigured and refuses to sign, as it does in a deployment
+// with no keys. Unlike the payment gateway this needed no production change:
+// NewStorageService already takes its base URL from configuration.
+func withStorageServer(baseURL string) harnessOption {
+	return func(c *harnessConfig) {
+		c.storageBaseURL = baseURL
+		c.storageServiceKey = "storage-key-test"
+	}
 }
 
 // newHarness builds a server backed by fresh fakes. It seeds one staff user per
@@ -190,10 +204,12 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 	}
 
 	// External adapters: empty credentials put each one in the no-op mode it
-	// already has in production, so nothing reaches the network.
+	// already has in production, so nothing reaches the network. The two that a
+	// test may point at a local httptest server (payment gateway, storage) stay
+	// unconfigured unless the corresponding option was passed.
 	fonnte := service.NewFonnteService("", h.Notifications)
 	email := service.NewEmailService("", "")
-	storage := service.NewStorageService("", "")
+	storage := service.NewStorageService(cfg.storageBaseURL, cfg.storageServiceKey)
 	pdf := service.NewPDFService()
 	midtrans := service.NewMidtransService(
 		cfg.midtransServerKey, cfg.midtransClientKey, "sandbox",
