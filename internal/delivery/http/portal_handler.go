@@ -1,8 +1,10 @@
 package httpdelivery
 
 import (
+	"context"
+	"errors"
 	"net/http"
-	"strings"
+	"os"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -15,6 +17,7 @@ import (
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/invoice"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
 	domainUser "github.com/irfan-ghzl/pintour-travel/internal/domain/user"
+	"github.com/irfan-ghzl/pintour-travel/internal/safe"
 	"github.com/irfan-ghzl/pintour-travel/internal/service"
 )
 
@@ -26,7 +29,11 @@ type PortalHandler struct {
 	docs         document.Repository
 	countryReqs  document.CountryRequirementRepository
 	tourLeaders  domainUser.TourLeaderRepository
+	users        domainUser.Repository
 	pdf          *service.PDFService
+	email        *service.EmailService
+	// TODO(ocr-v2.0-F3): re-enable when GCP Vision billing active
+	ocr          *service.OCRService
 	jwtSecret    string
 }
 
@@ -37,7 +44,10 @@ func NewPortalHandler(
 	docs document.Repository,
 	countryReqs document.CountryRequirementRepository,
 	tourLeaders domainUser.TourLeaderRepository,
+	users domainUser.Repository,
 	pdf *service.PDFService,
+	email *service.EmailService,
+	ocr *service.OCRService,
 	jwtSecret string,
 ) *PortalHandler {
 	return &PortalHandler{
@@ -47,9 +57,35 @@ func NewPortalHandler(
 		docs:         docs,
 		countryReqs:  countryReqs,
 		tourLeaders:  tourLeaders,
+		users:        users,
 		pdf:          pdf,
+		email:        email,
+		ocr:          ocr,
 		jwtSecret:    jwtSecret,
 	}
+}
+
+// notifyAdmins sends an email to every admin user (best-effort, async-safe).
+func (h *PortalHandler) notifyAdmins(ctx context.Context, send func(adminEmail string)) {
+	if h.email == nil || h.users == nil {
+		return
+	}
+	admins, err := h.users.ListByRole(ctx, "admin")
+	if err != nil {
+		return
+	}
+	for _, a := range admins {
+		if a.Email != "" {
+			send(a.Email)
+		}
+	}
+}
+
+func portalAppURL() string {
+	if v := os.Getenv("APP_URL"); v != "" {
+		return v
+	}
+	return "http://localhost:5173"
 }
 
 // PortalLogin godoc
@@ -108,11 +144,140 @@ func (h *PortalHandler) PortalMe(c echo.Context) error {
 		days := int(time.Until(*p.BatchDepartureDate).Hours() / 24)
 		countdown = &days
 	}
-	return c.JSON(http.StatusOK, ok(map[string]interface{}{
+	resp := map[string]interface{}{
 		"participant":     p,
 		"days_to_depart":  countdown,
 		"briefing_active": isBriefingActive(p),
+	}
+	// FR-PORTAL-11: warn when the OCR-read passport expires within 6 months.
+	if h.ocr != nil {
+		if expiry, soon := h.ocr.PassportExpiry(c.Request().Context(), pid); expiry != "" {
+			resp["passport_expiry"] = expiry
+			resp["passport_expiring_soon"] = soon
+		}
+	}
+	return c.JSON(http.StatusOK, ok(resp))
+}
+
+// PortalMyTrips godoc
+// @Summary      Riwayat perjalanan peserta — tour aktif + lampau (v2.0 F2)
+// @Tags         portal
+// @Security     BearerAuth
+// @Produce      json
+// @Success      200 {object} map[string]interface{}
+// @Router       /portal/my-trips [get]
+func (h *PortalHandler) PortalMyTrips(c echo.Context) error {
+	ctx := c.Request().Context()
+	puID := portalUserID(c)
+
+	// Resolve the phone fallback so legacy (unlinked) tours are still included.
+	phone := ""
+	if puID != "" {
+		if pu, err := h.participants.GetPortalUser(ctx, puID); err == nil {
+			phone = pu.Phone
+		}
+	}
+	if phone == "" {
+		// Legacy token without portal_user_id — derive from the participant.
+		if p, err := h.participants.GetParticipant(ctx, portalParticipantID(c)); err == nil {
+			phone = p.Phone
+		}
+	}
+
+	trips, err := h.participants.ListTrips(ctx, puID, phone)
+	if err != nil {
+		return serverErr(c, err)
+	}
+
+	now := time.Now()
+	active := []map[string]interface{}{}
+	history := []map[string]interface{}{}
+	for i := range trips {
+		t := &trips[i]
+		card := map[string]interface{}{
+			"participant_id": t.ID,
+			"package_name":   t.PackageName,
+			"room_type":      t.RoomType,
+			"departure_date": t.BatchDepartureDate,
+			"is_active":      t.IsActive,
+			"payment_status": h.tripPaymentStatus(ctx, t.ID),
+		}
+		isHistory := t.BatchDepartureDate != nil && t.BatchDepartureDate.Before(now)
+		if isHistory {
+			history = append(history, card)
+		} else {
+			active = append(active, card)
+		}
+	}
+	return c.JSON(http.StatusOK, ok(map[string]interface{}{
+		"active":  active,
+		"history": history,
 	}))
+}
+
+// tripPaymentStatus summarizes the invoice state of one tour: "lunas" when any
+// invoice is settled, otherwise the latest invoice status, or "-" when none.
+func (h *PortalHandler) tripPaymentStatus(ctx context.Context, participantID string) string {
+	invs, err := h.invoices.GetInvoicesByParticipant(ctx, participantID)
+	if err != nil || len(invs) == 0 {
+		return "-"
+	}
+	for _, inv := range invs {
+		if inv.Status == "lunas" {
+			return "lunas"
+		}
+	}
+	return invs[0].Status
+}
+
+// PortalTripInvoicePDF downloads the invoice PDF of any tour owned by the logged-in
+// portal user, including past trips (v2.0 F2 — download artefak lama).
+func (h *PortalHandler) PortalTripInvoicePDF(c echo.Context) error {
+	ctx := c.Request().Context()
+	participantID := c.Param("participant_id")
+
+	// Authorize: the requested tour must belong to this portal identity.
+	// Resolve the phone the same way PortalMyTrips does, incl. the legacy
+	// fallback for tokens without a portal_user_id — otherwise an owned trip
+	// fails the ownership check and the PDF 404s.
+	puID := portalUserID(c)
+	phone := ""
+	if puID != "" {
+		if pu, err := h.participants.GetPortalUser(ctx, puID); err == nil {
+			phone = pu.Phone
+		}
+	}
+	if phone == "" {
+		if p, err := h.participants.GetParticipant(ctx, portalParticipantID(c)); err == nil {
+			phone = p.Phone
+		}
+	}
+	trips, err := h.participants.ListTrips(ctx, puID, phone)
+	if err != nil {
+		return serverErr(c, err)
+	}
+	owned := false
+	for i := range trips {
+		if trips[i].ID == participantID {
+			owned = true
+			break
+		}
+	}
+	if !owned {
+		return notFound(c, "perjalanan tidak ditemukan")
+	}
+
+	invs, err := h.invoices.GetInvoicesByParticipant(ctx, participantID)
+	if err != nil || len(invs) == 0 {
+		return notFound(c, "invoice tidak ditemukan")
+	}
+	pdfBytes, err := h.invoices.GeneratePDFForParticipant(ctx, invs[0].ID, participantID)
+	if err != nil {
+		return notFound(c, "invoice tidak ditemukan")
+	}
+	c.Response().Header().Set("Content-Type", "application/pdf")
+	c.Response().Header().Set("Content-Disposition", "attachment; filename=invoice.pdf")
+	return c.Blob(http.StatusOK, "application/pdf", pdfBytes)
 }
 
 // PortalInvoices returns invoices for the logged-in participant.
@@ -127,7 +292,8 @@ func (h *PortalHandler) PortalInvoices(c echo.Context) error {
 
 // PortalInvoicePDF returns the PDF bytes for a specific invoice.
 func (h *PortalHandler) PortalInvoicePDF(c echo.Context) error {
-	pdfBytes, err := h.invoices.GeneratePDF(c.Request().Context(), c.Param("id"))
+	pid := portalParticipantID(c)
+	pdfBytes, err := h.invoices.GeneratePDFForParticipant(c.Request().Context(), c.Param("id"), pid)
 	if err != nil {
 		return notFound(c, "invoice tidak ditemukan")
 	}
@@ -143,10 +309,54 @@ func (h *PortalHandler) PortalUploadProof(c echo.Context) error {
 		return badRequest(c, "format tidak valid")
 	}
 	pp.InvoiceID = c.Param("id")
-	if err := h.invoices.UploadProof(c.Request().Context(), &pp); err != nil {
+	pid := portalParticipantID(c)
+	if err := h.invoices.UploadProofForParticipant(c.Request().Context(), &pp, pid); err != nil {
+		if errors.Is(err, invoicesvc.ErrNotOwned) {
+			return notFound(c, "invoice tidak ditemukan")
+		}
 		return serverErr(c, err)
 	}
+	// §3.3 notify admins a new payment proof needs verification.
+	amount := pp.AmountClaimed
+	safe.Go("notifikasi admin bukti bayar baru", func() {
+		bg := context.Background()
+		p, err := h.participants.GetParticipant(bg, pid)
+		if err != nil {
+			return
+		}
+		verifyLink := portalAppURL() + "/admin/invoices"
+		h.notifyAdmins(bg, func(adminEmail string) {
+			_ = h.email.SendEmailAdminPaymentProof(bg, adminEmail, p.Name,
+				rupiahFmt(amount), verifyLink)
+		})
+	})
 	return c.JSON(http.StatusCreated, ok(pp))
+}
+
+// PortalCreatePayment creates a Midtrans Snap transaction for an invoice (v2.0 F1).
+//
+//	@Summary  Buat transaksi pembayaran Midtrans untuk invoice peserta
+//	@Tags     portal
+//	@Param    id path string true "Invoice ID"
+//	@Success  200 {object} map[string]interface{}
+//	@Router   /portal/invoices/{id}/create-payment [post]
+func (h *PortalHandler) PortalCreatePayment(c echo.Context) error {
+	pid := portalParticipantID(c)
+	token, clientKey, err := h.invoices.CreatePaymentForParticipant(c.Request().Context(), c.Param("id"), pid)
+	if err != nil {
+		switch {
+		case errors.Is(err, invoicesvc.ErrNotOwned):
+			return notFound(c, "invoice tidak ditemukan")
+		case errors.Is(err, invoicesvc.ErrInvoiceAlreadyPaid):
+			return c.JSON(http.StatusConflict, errResponse("INVOICE_PAID", "invoice sudah lunas"))
+		default:
+			return serverErr(c, err)
+		}
+	}
+	return c.JSON(http.StatusOK, ok(map[string]string{
+		"snap_token": token,
+		"client_key": clientKey,
+	}))
 }
 
 // PortalDocuments lists documents for the logged-in participant.
@@ -170,6 +380,25 @@ func (h *PortalHandler) PortalUploadDocument(c echo.Context) error {
 	if err := h.docs.Create(c.Request().Context(), &d); err != nil {
 		return serverErr(c, err)
 	}
+	// v2.0 F6 — async OCR via self-hosted Tesseract (best-effort).
+	if h.ocr != nil && h.ocr.Enabled() && d.FilePath != "" {
+		safe.Go("OCR dokumen portal", func() {
+			h.ocr.ProcessDocument(context.Background(), d.ID, d.ParticipantID, d.FilePath, d.DocumentType)
+		})
+	}
+	// §3.3 notify admins a new document needs review.
+	docType := d.DocumentType
+	safe.Go("notifikasi admin dokumen baru", func() {
+		bg := context.Background()
+		p, err := h.participants.GetParticipant(bg, pid)
+		if err != nil {
+			return
+		}
+		reviewLink := portalAppURL() + "/admin/documents"
+		h.notifyAdmins(bg, func(adminEmail string) {
+			_ = h.email.SendEmailAdminDocUploaded(bg, adminEmail, p.Name, docType, reviewLink)
+		})
+	})
 	return c.JSON(http.StatusCreated, ok(d))
 }
 
@@ -367,6 +596,7 @@ func (h *PortalHandler) PortalRequestDeletion(c echo.Context) error {
 
 type portalClaims struct {
 	ParticipantID string `json:"participant_id"`
+	PortalUserID  string `json:"portal_user_id,omitempty"` // v2.0 F1 — central portal identity
 	jwt.RegisteredClaims
 }
 
@@ -378,6 +608,9 @@ func (h *PortalHandler) generatePortalToken(p *participant.Participant) (string,
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
 	}
+	if p.PortalUserID != nil {
+		claims.PortalUserID = *p.PortalUserID
+	}
 	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return t.SignedString([]byte(h.jwtSecret))
 }
@@ -385,6 +618,13 @@ func (h *PortalHandler) generatePortalToken(p *participant.Participant) (string,
 func portalParticipantID(c echo.Context) string {
 	if claims, ok := c.Get("portal_claims").(*portalClaims); ok {
 		return claims.ParticipantID
+	}
+	return ""
+}
+
+func portalUserID(c echo.Context) string {
+	if claims, ok := c.Get("portal_claims").(*portalClaims); ok {
+		return claims.PortalUserID
 	}
 	return ""
 }
@@ -416,47 +656,10 @@ func isBriefingActive(p *participant.Participant) bool {
 	return time.Until(*p.BatchDepartureDate).Hours() <= 14*24
 }
 
-// destinationToCountryCode maps free-text destination (cth "Jepang", "Arab Saudi & Turki")
-// ke ISO country code 2 huruf yang dipakai di tabel country_document_requirements.
-// Hanya substring match; untuk destinasi multi-negara, country pertama yang match menang.
+// destinationToCountryCode delegates to service.DestinationToCountryCode (shared
+// with the application layer so the convert flow can resolve doc requirements).
 func destinationToCountryCode(destination string) string {
-	d := strings.ToLower(destination)
-	mapping := []struct {
-		needle string
-		code   string
-	}{
-		{"jepang", "JP"}, {"japan", "JP"},
-		{"korea", "KR"},
-		{"turki", "TR"}, {"turkey", "TR"},
-		{"arab saudi", "SA"}, {"saudi", "SA"}, {"makkah", "SA"}, {"madinah", "SA"},
-		{"uea", "AE"}, {"emirat", "AE"}, {"dubai", "AE"}, {"abu dhabi", "AE"},
-		{"singapore", "SG"}, {"singapura", "SG"},
-		{"malaysia", "MY"},
-		{"thailand", "TH"},
-		{"vietnam", "VN"},
-		{"china", "CN"}, {"tiongkok", "CN"},
-		{"hong kong", "HK"}, {"hongkong", "HK"},
-		{"taiwan", "TW"},
-		{"australia", "AU"},
-		{"belanda", "NL"}, {"netherlands", "NL"},
-		{"perancis", "FR"}, {"prancis", "FR"}, {"france", "FR"},
-		{"jerman", "DE"}, {"germany", "DE"},
-		{"italia", "IT"}, {"italy", "IT"},
-		{"spanyol", "ES"}, {"spain", "ES"},
-		{"swiss", "CH"},
-		{"inggris", "GB"}, {"uk", "GB"},
-		{"amerika", "US"}, {"usa", "US"},
-		{"kanada", "CA"}, {"canada", "CA"},
-		{"mesir", "EG"}, {"egypt", "EG"},
-		{"yordania", "JO"}, {"jordan", "JO"},
-		{"indonesia", "ID"},
-	}
-	for _, m := range mapping {
-		if strings.Contains(d, m.needle) {
-			return m.code
-		}
-	}
-	return "ID"
+	return service.DestinationToCountryCode(destination)
 }
 
 func normalizePhone(phone string) string {

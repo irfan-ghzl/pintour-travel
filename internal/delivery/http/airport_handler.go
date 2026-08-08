@@ -11,6 +11,7 @@ import (
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/airport"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/notification"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
+	"github.com/irfan-ghzl/pintour-travel/internal/safe"
 	"github.com/irfan-ghzl/pintour-travel/internal/service"
 )
 
@@ -253,7 +254,7 @@ func (h *AirportHandler) ConfirmDeparture(c echo.Context) error {
 	}
 
 	// Send WA blast in background
-	go func() {
+	safe.Go("blast WA konfirmasi keberangkatan", func() {
 		bgCtx := context.Background()
 		for _, p := range pts {
 			msg := fmt.Sprintf(
@@ -277,7 +278,7 @@ func (h *AirportHandler) ConfirmDeparture(c echo.Context) error {
 				notification.TypeDepartureConfirm, msg, &body.BatchID, &refType)
 			time.Sleep(time.Second)
 		}
-	}()
+	})
 
 	return c.JSON(http.StatusOK, ok(map[string]interface{}{
 		"message":      fmt.Sprintf("WA konfirmasi dikirim ke %d peserta", len(pts)),

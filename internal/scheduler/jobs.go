@@ -11,26 +11,30 @@ import (
 
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/notification"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
+	domainUser "github.com/irfan-ghzl/pintour-travel/internal/domain/user"
+	"github.com/irfan-ghzl/pintour-travel/internal/safe"
 	"github.com/irfan-ghzl/pintour-travel/internal/service"
 )
 
 // Scheduler runs automated WA notification jobs (§17) + retention cleanup (§25.4)
-// via gocron (PRD §18 — go-co-op/gocron).
+// + the automation jobs (prompt §2) via gocron (PRD §18 — go-co-op/gocron).
 type Scheduler struct {
 	participants participant.Repository
+	users        domainUser.Repository
 	fonnte       *service.FonnteService
+	email        *service.EmailService
 	db           *sql.DB
 	cron         gocron.Scheduler
 }
 
-func New(participants participant.Repository, fonnte *service.FonnteService, db *sql.DB) (*Scheduler, error) {
+func New(participants participant.Repository, users domainUser.Repository, fonnte *service.FonnteService, email *service.EmailService, db *sql.DB) (*Scheduler, error) {
 	cron, err := gocron.NewScheduler(
 		gocron.WithLocation(time.Local),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("init gocron: %w", err)
 	}
-	return &Scheduler{participants: participants, fonnte: fonnte, db: db, cron: cron}, nil
+	return &Scheduler{participants: participants, users: users, fonnte: fonnte, email: email, db: db, cron: cron}, nil
 }
 
 // Start launches all scheduled jobs via gocron.
@@ -45,6 +49,10 @@ func (s *Scheduler) Start() {
 		{"00:01", s.activateBriefing, "briefing-activation H-14"},
 		{"03:00", s.sendAirportInfo, "airport-info hari-H"},
 		{"02:00", s.retentionCleanup, "retention-cleanup §25.4"},
+		// Automation jobs (prompt §2)
+		{"00:01", s.expireLeads, "expire-leads §2.2"},
+		{"00:05", s.expireInvoices, "expire-invoices §2.3"},
+		{"08:00", s.checkBatchQuota, "batch-quota-warning §2.4"},
 	}
 
 	for _, j := range jobs {
@@ -53,7 +61,10 @@ func (s *Scheduler) Start() {
 			gocron.DailyJob(1, gocron.NewAtTimes(
 				gocron.NewAtTime(uint(t.Hour()), uint(t.Minute()), 0),
 			)),
-			gocron.NewTask(j.fn),
+			// gocron recovers a panicking job but keeps only the value; wrapping
+			// it means the stack that caused it reaches the log as well, in the
+			// same shape as every other background job.
+			gocron.NewTask(safe.Recovered(j.label, j.fn)),
 			gocron.WithName(j.label),
 		)
 		if err != nil {
@@ -61,8 +72,17 @@ func (s *Scheduler) Start() {
 		}
 	}
 
+	// checkStaleLeads runs hourly (prompt §2.1).
+	if _, err := s.cron.NewJob(
+		gocron.DurationJob(time.Hour),
+		gocron.NewTask(safe.Recovered("stale-leads §2.1", s.checkStaleLeads)),
+		gocron.WithName("stale-leads §2.1"),
+	); err != nil {
+		log.Printf("scheduler: failed to schedule stale-leads: %v", err)
+	}
+
 	s.cron.Start()
-	log.Println("Scheduler started (gocron): WA jobs + retention cleanup")
+	log.Println("Scheduler started (gocron): WA jobs + retention cleanup + automation §2")
 }
 
 // Stop shuts down the scheduler gracefully.
@@ -121,6 +141,11 @@ func (s *Scheduler) sendDepartureReminders() {
 			}
 			_ = s.fonnte.SendDepartureReminder(ctx, p.Phone, p.Name,
 				p.PackageName, depDate, r.label, r.msgType, p.ID)
+			// §3.2 H-14 reminder email (checklist persiapan).
+			if r.days == 14 && s.email != nil && p.Email != "" {
+				_ = s.email.SendEmailReminderH14(ctx, p.Email, p.Name, p.PackageName, depDate,
+					envOr("PORTAL_BASE_URL", "http://localhost:3000")+"/portal")
+			}
 			time.Sleep(time.Second)
 		}
 	}
@@ -150,6 +175,11 @@ func (s *Scheduler) activateBriefing() {
 		refType := "participant"
 		_ = s.fonnte.Send(ctx, p.Phone, p.Name,
 			notification.TypeReminderH14, msg, &p.ID, &refType)
+		// §3.2 briefing-activated email.
+		if s.email != nil && p.Email != "" {
+			_ = s.email.SendEmailBriefingActivated(ctx, p.Email, p.Name, p.PackageName, "",
+				depDate, envOr("PORTAL_BASE_URL", "http://localhost:3000")+"/portal/briefing")
+		}
 		time.Sleep(time.Second)
 	}
 }

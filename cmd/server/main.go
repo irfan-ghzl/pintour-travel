@@ -23,8 +23,8 @@ import (
 
 	invoicesvc "github.com/irfan-ghzl/pintour-travel/internal/application/invoice"
 	leadsvc "github.com/irfan-ghzl/pintour-travel/internal/application/lead"
-	participantsvc "github.com/irfan-ghzl/pintour-travel/internal/application/participant"
 	pkgsvc "github.com/irfan-ghzl/pintour-travel/internal/application/package"
+	participantsvc "github.com/irfan-ghzl/pintour-travel/internal/application/participant"
 	usersvc "github.com/irfan-ghzl/pintour-travel/internal/application/user"
 	"github.com/irfan-ghzl/pintour-travel/internal/cache"
 	"github.com/irfan-ghzl/pintour-travel/internal/config"
@@ -34,7 +34,7 @@ import (
 	"github.com/irfan-ghzl/pintour-travel/internal/service"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // §18: PostgreSQL driver via pgx/v5 (database/sql compat)
-	"github.com/joho/godotenv"          // §18: load .env (joho/godotenv)
+	"github.com/joho/godotenv"         // §18: load .env (joho/godotenv)
 	"github.com/labstack/echo/v4"
 	"github.com/rs/cors" // §19.4: rs/cors middleware
 )
@@ -44,6 +44,9 @@ func main() {
 	_ = godotenv.Load()
 
 	cfg := config.Load()
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("invalid configuration: %v", err)
+	}
 
 	// ── Database via pgx/v5 stdlib ────────────────────────────────────────────
 	// PRD §18: jackc/pgx/v5 sebagai PostgreSQL driver.
@@ -81,18 +84,25 @@ func main() {
 	leadRepo := postgres.NewLeadRepo(db)
 	noteRepo := postgres.NewLeadNoteRepo(db)
 	paxRepo := postgres.NewParticipantRepo(db)
+	portalUserRepo := postgres.NewPortalUserRepo(db) // v2.0 F1 — central portal identity
 	invRepo := postgres.NewInvoiceRepo(db)
 	proofRepo := postgres.NewPaymentProofRepo(db)
 	docRepo := postgres.NewDocumentRepo(db)
+	ocrRepo := postgres.NewOCRResultRepo(db) // v2.0 F6 — OCR results
 	countryReqRepo := postgres.NewCountryRequirementRepo(db)
 	airportRepo := postgres.NewAirportRepo(db)
 	notifRepo := postgres.NewNotificationRepo(db)
 	userRepo := postgres.NewUserRepo(db)
 	tourLeaderRepo := postgres.NewTourLeaderRepo(db)
+	chatbotRepo := postgres.NewChatbotRepo(db)
 
 	// ── Services ──────────────────────────────────────────────────────────────
 	fonnteSvc := service.NewFonnteService(cfg.Fonnte.APIToken, notifRepo)
 	emailSvc := service.NewEmailService(cfg.Email.ResendAPIKey, cfg.Email.FromAddress)
+	midtransSvc := service.NewMidtransService(cfg.Midtrans.ServerKey, cfg.Midtrans.ClientKey, cfg.Midtrans.Env)
+	if !midtransSvc.Enabled() {
+		log.Println("Midtrans not configured — payment gateway endpoints will return error until MIDTRANS_SERVER_KEY is set")
+	}
 	pdfSvc := service.NewPDFService()
 	storageSvc := service.NewStorageService(cfg.Supabase.URL, cfg.Supabase.ServiceKey)
 	if !storageSvc.Enabled() {
@@ -100,13 +110,26 @@ func main() {
 	}
 
 	packageService := pkgsvc.NewService(pkgRepo, imgRepo, batchRepo)
-	leadService := leadsvc.NewService(leadRepo, noteRepo, userRepo, fonnteSvc)
-	participantService := participantsvc.NewService(paxRepo, leadRepo)
-	invoiceService := invoicesvc.NewService(invRepo, proofRepo, paxRepo, fonnteSvc, pdfSvc)
+	leadService := leadsvc.NewService(leadRepo, noteRepo, userRepo, portalUserRepo, paxRepo, fonnteSvc, emailSvc)
+	// invoiceService is constructed before participantService because the convert
+	// flow (§1.1) reuses it to auto-generate invoices.
+	invoiceService := invoicesvc.NewService(invRepo, proofRepo, paxRepo, fonnteSvc, pdfSvc, emailSvc, midtransSvc)
+	participantService := participantsvc.NewService(paxRepo, leadRepo, portalUserRepo, batchRepo, pkgRepo, invoiceService, countryReqRepo)
 	userService := usersvc.NewUserService(userRepo, cfg.JWT.Secret, cfg.JWT.ExpirationHours)
+	chatbotSvc := service.NewChatbotService(chatbotRepo, db, pkgRepo, fonnteSvc,
+		cfg.Chatbot.GeminiKey, cfg.Chatbot.Model, cfg.Chatbot.MaxHistory, cfg.Chatbot.Active)
+	if !chatbotSvc.Active() {
+		log.Println("Chatbot inactive — set GEMINI_API_KEY and CHATBOT_ACTIVE=true to enable")
+	}
+	ocrSvc := service.NewOCRService(cfg.OCR.Engine, cfg.OCR.GoogleVisionKey, cfg.OCR.TesseractURL, cfg.OCR.ConfidenceThreshold, ocrRepo, paxRepo, storageSvc)
+	if !ocrSvc.Enabled() {
+		log.Println("OCR disabled — set OCR_ENGINE=tesseract_local (self-hosted) atau google_vision untuk mengaktifkan")
+	} else {
+		log.Printf("OCR aktif — engine=%s", cfg.OCR.Engine)
+	}
 
 	// ── Scheduler — gocron (§18) ─────────────────────────────────────────────
-	sched, err := scheduler.New(paxRepo, fonnteSvc, db)
+	sched, err := scheduler.New(paxRepo, userRepo, fonnteSvc, emailSvc, db)
 	if err != nil {
 		log.Fatalf("scheduler init: %v", err)
 	}
@@ -129,7 +152,6 @@ func main() {
 		AllowCredentials: true,
 		MaxAge:           600,
 	})
-	e.Use(echoCORSAdapter(corsHandler))
 
 	// ── Routes ────────────────────────────────────────────────────────────────
 	httpdelivery.RegisterRoutes(e, httpdelivery.Services{
@@ -143,17 +165,29 @@ func main() {
 		Airport:        airportRepo,
 		Participants:   paxRepo,
 		Document:       docRepo,
+		OCRRepo:        ocrRepo, // v2.0 F6
+		OCR:            ocrSvc,  // v2.0 F6
 		CountryReq:     countryReqRepo,
 		PDF:            pdfSvc,
 		Fonnte:         fonnteSvc,
 		Email:          emailSvc,
 		Storage:        storageSvc,
 		NotifRepo:      notifRepo,
+		DB:             db,
+		Midtrans:       midtransSvc,
+		Chatbot:        chatbotSvc,
+		ChatbotRepo:    chatbotRepo,
+		ChatbotToken:   cfg.Chatbot.WebhookToken,
 		AppURL:         cfg.Email.AppURL,
 		JWTSecret:      cfg.JWT.Secret,
 		JWTExpiryHours: cfg.JWT.ExpirationHours,
 		Production:     cfg.Server.Env == "production",
 	})
+
+	// After RegisterRoutes on purpose: Echo runs global middleware in the order
+	// it was added, so registering CORS last puts it inside the panic recovery
+	// RegisterRoutes installs rather than in front of it.
+	e.Use(echoCORSAdapter(corsHandler))
 
 	addr := fmt.Sprintf(":%s", cfg.Server.Port)
 	srv := &http.Server{
@@ -163,6 +197,10 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
+	// The one goroutine deliberately left outside safe.Go: it is not background
+	// work but the service itself. Recovering a panic here would leave the
+	// process alive with nothing listening, which hides the failure instead of
+	// surviving it.
 	go func() {
 		log.Printf("🚀 Pintour API v2.0 — listening on %s (env=%s, driver=pgx/v5)", addr, cfg.Server.Env)
 		log.Printf("📚 Swagger: http://localhost:%s/swagger/index.html", cfg.Server.Port)

@@ -51,6 +51,12 @@ type fakeUserRepo struct {
 	fakeErr
 	users map[string]*domainUser.User
 	order []string // insertion order, so listings are deterministic
+	// panicRole/panicValue make ListByRole panic for one role only. Scoped to a
+	// role because the lead flow lists konsultan on the request goroutine and
+	// admin on the notification goroutine: it is how a test raises a panic in
+	// background work without also raising one in the request.
+	panicRole  string
+	panicValue any
 }
 
 func newFakeUserRepo() *fakeUserRepo {
@@ -125,7 +131,15 @@ func (r *fakeUserRepo) Deactivate(_ context.Context, id string) error {
 	return nil
 }
 
+// PanicOnListByRole makes every subsequent ListByRole for role panic with v.
+func (r *fakeUserRepo) PanicOnListByRole(role string, v any) {
+	r.panicRole, r.panicValue = role, v
+}
+
 func (r *fakeUserRepo) ListByRole(_ context.Context, role string) ([]domainUser.User, error) {
+	if r.panicValue != nil && r.panicRole == role {
+		panic(r.panicValue)
+	}
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -212,6 +226,10 @@ type fakeLeadRepo struct {
 	// StatusChanges records every UpdateStatus call, including the actor, so
 	// audit-trail expectations can be asserted without a database.
 	StatusChanges []LeadStatusChange
+	// panicOnCreate, when set, makes Create panic with it instead of storing the
+	// lead — a repository dying mid-request, which is what the runtime-resilience
+	// tests need in order to raise a panic from inside a real handler chain.
+	panicOnCreate any
 }
 
 // LeadStatusChange is one recorded UpdateStatus call.
@@ -234,7 +252,13 @@ func (r *fakeLeadRepo) Seed(l domainLead.Lead) *domainLead.Lead {
 	return r.leads[l.ID]
 }
 
+// PanicOnCreate makes every subsequent Create panic with v.
+func (r *fakeLeadRepo) PanicOnCreate(v any) { r.panicOnCreate = v }
+
 func (r *fakeLeadRepo) Create(_ context.Context, l *domainLead.Lead) error {
+	if r.panicOnCreate != nil {
+		panic(r.panicOnCreate)
+	}
 	if r.err != nil {
 		return r.err
 	}

@@ -1,6 +1,7 @@
 package httpdelivery
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -40,8 +41,25 @@ func notFound(c echo.Context, message string) error {
 	return c.JSON(http.StatusNotFound, errResponse("NOT_FOUND", message))
 }
 
+// serverErrEnvelope is the body behind every 500: deliberately generic, so
+// internal details (queries, paths, panic values) are not disclosed to the
+// client. The panic-recovery middleware answers with it too, which is why it is
+// separate from serverErr — that one also logs, and a recovered panic is
+// already logged with its stack.
+func serverErrEnvelope() map[string]interface{} {
+	return errResponse("SERVER_ERROR", "Terjadi kesalahan internal")
+}
+
 func serverErr(c echo.Context, err error) error {
-	return c.JSON(http.StatusInternalServerError, errResponse("SERVER_ERROR", err.Error()))
+	c.Logger().Error(err)
+	return c.JSON(http.StatusInternalServerError, serverErrEnvelope())
+}
+
+// requestTooLarge refuses a request whose body exceeds limit bytes (§ketahanan
+// runtime).
+func requestTooLarge(c echo.Context, limit int64) error {
+	return c.JSON(http.StatusRequestEntityTooLarge, errResponse("REQUEST_TOO_LARGE",
+		fmt.Sprintf("Ukuran permintaan melebihi batas %d KB", limit/1024)))
 }
 
 func forbidden(c echo.Context) error {
