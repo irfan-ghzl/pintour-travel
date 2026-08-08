@@ -24,6 +24,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/document"
 	domainLead "github.com/irfan-ghzl/pintour-travel/internal/domain/lead"
+	domainParticipant "github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
 	domainUser "github.com/irfan-ghzl/pintour-travel/internal/domain/user"
 	"github.com/labstack/echo/v4"
 )
@@ -58,6 +59,7 @@ func newPayloadValidator() *validator.Validate {
 	registerVocabulary(v, "lead_status", domainLead.Statuses)
 	registerVocabulary(v, "staff_role", domainUser.Roles)
 	registerVocabulary(v, "document_type", document.Types)
+	registerVocabulary(v, "room_type", domainParticipant.RoomTypes)
 
 	return v
 }

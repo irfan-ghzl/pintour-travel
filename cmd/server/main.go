@@ -95,6 +95,10 @@ func main() {
 	userRepo := postgres.NewUserRepo(db)
 	tourLeaderRepo := postgres.NewTourLeaderRepo(db)
 	chatbotRepo := postgres.NewChatbotRepo(db)
+	// Runs the writes that only make sense together — currently lead conversion —
+	// as one transaction. It sits beside the repositories rather than replacing
+	// them: every single-row operation still goes through the ones above.
+	unitOfWork := postgres.NewUnitOfWork(db)
 
 	// ── Services ──────────────────────────────────────────────────────────────
 	fonnteSvc := service.NewFonnteService(cfg.Fonnte.APIToken, notifRepo)
@@ -114,7 +118,8 @@ func main() {
 	// invoiceService is constructed before participantService because the convert
 	// flow (§1.1) reuses it to auto-generate invoices.
 	invoiceService := invoicesvc.NewService(invRepo, proofRepo, paxRepo, fonnteSvc, pdfSvc, emailSvc, midtransSvc)
-	participantService := participantsvc.NewService(paxRepo, leadRepo, portalUserRepo, batchRepo, pkgRepo, invoiceService, countryReqRepo)
+	participantService := participantsvc.NewService(paxRepo, leadRepo, portalUserRepo,
+		unitOfWork, batchRepo, pkgRepo, invoiceService, countryReqRepo, fonnteSvc)
 	userService := usersvc.NewUserService(userRepo, cfg.JWT.Secret, cfg.JWT.ExpirationHours)
 	chatbotSvc := service.NewChatbotService(chatbotRepo, db, pkgRepo, fonnteSvc,
 		cfg.Chatbot.GeminiKey, cfg.Chatbot.Model, cfg.Chatbot.MaxHistory, cfg.Chatbot.Active)
@@ -179,6 +184,7 @@ func main() {
 		ChatbotRepo:    chatbotRepo,
 		ChatbotToken:   cfg.Chatbot.WebhookToken,
 		AppURL:         cfg.Email.AppURL,
+		PortalURL:      cfg.Server.PortalBaseURL,
 		JWTSecret:      cfg.JWT.Secret,
 		JWTExpiryHours: cfg.JWT.ExpirationHours,
 		Production:     cfg.Server.Env == "production",

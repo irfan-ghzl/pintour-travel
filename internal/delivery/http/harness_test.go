@@ -116,6 +116,10 @@ type harness struct {
 	Airport       *fakeAirportRepo
 	Notifications *fakeNotifRepo
 	Chatbot       *fakeChatbotRepo
+
+	// Unit runs a unit of work over the fakes above, undoing its writes when it
+	// fails — see fakeUnitOfWork for why a passthrough would not do.
+	Unit *fakeUnitOfWork
 }
 
 // harnessOption customizes the harness before routes are registered.
@@ -190,6 +194,7 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 		Notifications: newFakeNotifRepo(),
 		Chatbot:       newFakeChatbotRepo(),
 	}
+	h.Unit = &fakeUnitOfWork{participants: h.Participants, leads: h.Leads, portalUsers: h.PortalUsers}
 	h.e.HideBanner = true
 	h.e.Logger.SetOutput(io.Discard)
 
@@ -225,7 +230,8 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 
 	invoiceSvc := invoicesvc.NewService(h.Invoices, h.Proofs, h.Participants, fonnte, pdf, email, midtrans)
 	leadSvc := leadsvc.NewService(h.Leads, h.Notes, h.Users, h.PortalUsers, h.Participants, fonnte, email)
-	participantSvc := participantsvc.NewService(h.Participants, h.Leads, h.PortalUsers, h.Batches, h.Packages, invoiceSvc, h.CountryReqs)
+	participantSvc := participantsvc.NewService(h.Participants, h.Leads, h.PortalUsers,
+		h.Unit, h.Batches, h.Packages, invoiceSvc, h.CountryReqs, fonnte)
 	packageSvc := pkgsvc.NewService(h.Packages, h.Images, h.Batches)
 	userSvc := usersvc.NewUserService(h.Users, testJWTSecret, 24)
 
@@ -254,6 +260,7 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 		ChatbotRepo:    h.Chatbot,
 		ChatbotToken:   cfg.chatbotToken,
 		AppURL:         "http://harness.test",
+		PortalURL:      "http://portal.harness.test",
 		JWTSecret:      testJWTSecret,
 		JWTExpiryHours: 24,
 		// Only affects the Secure flag on the session cookie; tests speak plain

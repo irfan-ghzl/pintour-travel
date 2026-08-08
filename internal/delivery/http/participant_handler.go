@@ -9,10 +9,16 @@ import (
 	domainParticipant "github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
 )
 
-type ParticipantHandler struct{ svc *participantsvc.Service }
+type ParticipantHandler struct {
+	svc *participantsvc.Service
+	// portalURL is where a converted participant logs in, taken from
+	// configuration rather than read from the environment here — this is the
+	// fourth place that value is needed and the first that does not restate it.
+	portalURL string
+}
 
-func NewParticipantHandler(svc *participantsvc.Service) *ParticipantHandler {
-	return &ParticipantHandler{svc}
+func NewParticipantHandler(svc *participantsvc.Service, portalURL string) *ParticipantHandler {
+	return &ParticipantHandler{svc: svc, portalURL: portalURL}
 }
 
 // ListParticipants godoc
@@ -96,7 +102,7 @@ func (h *ParticipantHandler) ConvertLead(c echo.Context) error {
 	var body struct {
 		LeadID   string `json:"lead_id" validate:"required"`
 		BatchID  string `json:"batch_id" validate:"required"`
-		RoomType string `json:"room_type" validate:"omitempty,oneof=single double triple"`
+		RoomType string `json:"room_type" validate:"omitempty,room_type"`
 	}
 	if err := bindJSON(c, &body); err != nil {
 		return invalidPayload(c, err, "lead_id dan batch_id harus diisi")
@@ -105,20 +111,32 @@ func (h *ParticipantHandler) ConvertLead(c echo.Context) error {
 		body.RoomType = "double"
 	}
 
-	res, err := h.svc.ConvertFromLead(c.Request().Context(), body.LeadID, body.BatchID, body.RoomType, claimUserID(c))
+	res, err := h.svc.ConvertFromLead(c.Request().Context(), body.LeadID, body.BatchID,
+		body.RoomType, claimUserID(c), h.portalURL)
 	if err != nil {
 		return c.JSON(http.StatusUnprocessableEntity, errResponse("CONVERT_FAILED", err.Error()))
 	}
-	// Returning customer (F1): reused the existing portal account, no new password.
-	message := "Peserta berhasil dibuat. Kirimkan password sementara via WA."
-	if res.ReusedAccount {
+	// FR-PORTAL-01: the system sends the password itself, so the admin is told
+	// what already happened rather than asked to do it. temp_password stays in
+	// the response as the fallback for a message that does not arrive — and the
+	// admin is only told it was sent when it actually was, since a deployment
+	// with no WhatsApp gateway sends nothing at all.
+	message := "Peserta berhasil dibuat. Kirimkan password sementara ke WhatsApp peserta " +
+		"— pengiriman otomatis tidak aktif di deployment ini."
+	switch {
+	case res.ReusedAccount:
+		// Returning customer (F1): existing portal account, no new password.
 		message = "Peserta lama terdeteksi — akun portal yang sudah ada digunakan. " +
 			"Password lama tetap berlaku, tidak perlu kirim password baru."
+	case res.CredentialsSent:
+		message = "Peserta berhasil dibuat. Password sementara sedang dikirim otomatis " +
+			"ke WhatsApp peserta — teruskan manual hanya bila peserta tidak menerimanya."
 	}
 	return c.JSON(http.StatusCreated, ok(map[string]interface{}{
-		"participant":    res.Participant,
-		"temp_password":  res.TempPassword,
-		"reused_account": res.ReusedAccount,
-		"message":        message,
+		"participant":      res.Participant,
+		"temp_password":    res.TempPassword,
+		"reused_account":   res.ReusedAccount,
+		"credentials_sent": res.CredentialsSent,
+		"message":          message,
 	}))
 }

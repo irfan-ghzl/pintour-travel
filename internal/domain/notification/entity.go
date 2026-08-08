@@ -31,4 +31,9 @@ const (
 	TypeReminderH7        = "REMINDER_H7"
 	TypeReminderH1        = "REMINDER_H1"
 	TypeDepartureConfirm  = "DEPARTURE_CONFIRM"
+	// TypePortalCredentials carries the temporary portal password to a newly
+	// converted participant (FR-PORTAL-01). It is the only message whose content
+	// nobody can reissue: portal accounts have no password-reset flow, so a
+	// participant who never receives it cannot get in at all.
+	TypePortalCredentials = "PORTAL_CREDENTIALS"
 )

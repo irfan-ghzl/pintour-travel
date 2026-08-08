@@ -37,20 +37,23 @@ type Services struct {
 	Participants   participant.Repository
 	Document       document.Repository
 	// TODO(ocr-v2.0-F3): re-enable when GCP Vision billing active
-	OCRRepo        document.OCRResultRepository
-	OCR            *service.OCRService
-	CountryReq     document.CountryRequirementRepository
-	PDF            *service.PDFService
-	Fonnte         *service.FonnteService
-	Email          *service.EmailService
-	Storage        *service.StorageService
-	NotifRepo      notification.Repository
-	DB             *sql.DB
-	Midtrans       *service.MidtransService
-	Chatbot        *service.ChatbotService
-	ChatbotRepo    chatbot.Repository
-	ChatbotToken   string
-	AppURL         string
+	OCRRepo      document.OCRResultRepository
+	OCR          *service.OCRService
+	CountryReq   document.CountryRequirementRepository
+	PDF          *service.PDFService
+	Fonnte       *service.FonnteService
+	Email        *service.EmailService
+	Storage      *service.StorageService
+	NotifRepo    notification.Repository
+	DB           *sql.DB
+	Midtrans     *service.MidtransService
+	Chatbot      *service.ChatbotService
+	ChatbotRepo  chatbot.Repository
+	ChatbotToken string
+	AppURL       string
+	// PortalURL is where participants log in — distinct from AppURL, which is
+	// the admin-facing front end.
+	PortalURL      string
 	JWTSecret      string
 	JWTExpiryHours int
 	Production     bool
@@ -75,7 +78,7 @@ func RegisterRoutes(e *echo.Echo, svc Services) {
 
 	pkgH := NewPackageHandler(svc.Package)
 	leadH := NewLeadHandler(svc.Lead, svc.NotifRepo)
-	paxH := NewParticipantHandler(svc.Participant)
+	paxH := NewParticipantHandler(svc.Participant, svc.PortalURL)
 	invH := NewInvoiceHandler(svc.Invoice)
 	userH := NewUserHandler(svc.User, svc.UserRepo, svc.Email, svc.AppURL, svc.Production, svc.JWTExpiryHours)
 	airH := NewAirportHandler(svc.Airport, svc.Participants, svc.Fonnte, svc.PDF)

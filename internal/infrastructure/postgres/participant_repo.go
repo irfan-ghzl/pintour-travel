@@ -8,7 +8,7 @@ import (
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
 )
 
-type participantRepo struct{ db *sql.DB }
+type participantRepo struct{ db dbtx }
 
 func NewParticipantRepo(db *sql.DB) participant.Repository { return &participantRepo{db} }
 

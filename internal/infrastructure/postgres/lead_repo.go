@@ -9,7 +9,7 @@ import (
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/lead"
 )
 
-type leadRepo struct{ db *sql.DB }
+type leadRepo struct{ db dbtx }
 
 func NewLeadRepo(db *sql.DB) lead.Repository { return &leadRepo{db} }
 
@@ -150,11 +150,29 @@ func (r *leadRepo) AssignTo(ctx context.Context, leadID, consultantID string) er
 	return err
 }
 
+// MarkConverted moves a lead to 'peserta', and only from 'deal'.
+//
+// The status condition is what makes converting a lead happen at most once. The
+// caller checks the status too, but it does so before the transaction opens, so
+// two convert requests can both pass that check and both go on to create a
+// participant for the same lead. Here the database decides: the second update
+// matches no row, and the conversion around it rolls back.
 func (r *leadRepo) MarkConverted(ctx context.Context, leadID string) error {
 	now := time.Now()
-	_, err := r.db.ExecContext(ctx,
-		`UPDATE leads SET status='peserta',converted_at=$1,updated_at=NOW() WHERE id=$2`, now, leadID)
-	return err
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE leads SET status='peserta',converted_at=$1,updated_at=NOW()
+		 WHERE id=$2 AND status='deal'`, now, leadID)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return lead.ErrNotConvertible
+	}
+	return nil
 }
 
 func (r *leadRepo) CountActiveByConsultant(ctx context.Context, consultantID string) (int, error) {

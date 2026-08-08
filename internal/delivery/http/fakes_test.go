@@ -18,6 +18,7 @@ package httpdelivery
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -32,6 +33,7 @@ import (
 	domainPkg "github.com/irfan-ghzl/pintour-travel/internal/domain/package"
 	domainParticipant "github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/portaluser"
+	"github.com/irfan-ghzl/pintour-travel/internal/domain/uow"
 	domainUser "github.com/irfan-ghzl/pintour-travel/internal/domain/user"
 )
 
@@ -41,11 +43,70 @@ import (
 // same here as in a deployment.
 var errNotFound = sql.ErrNoRows
 
+// errWriteFailed stands in for a write the database refused — a constraint
+// violation, a dropped connection. What it is does not matter; that the caller
+// must leave nothing behind does.
+var errWriteFailed = errors.New("write failed")
+
 // fakeErr is embedded by every fake so a test can force its methods to fail.
 type fakeErr struct{ err error }
 
-// Fail makes every subsequent call on this repository return err.
+// Fail makes every subsequent call on this repository return err. Passing nil
+// clears it, which is how a test replays an operation that failed once.
 func (f *fakeErr) Fail(err error) { f.err = err }
+
+// ─── uow.Runner ───────────────────────────────────────────────────────────────
+
+// fakeUnitOfWork runs a unit of work against the in-memory fakes and undoes
+// every write when it fails.
+//
+// The rollback is the whole point of this type. A passthrough that merely called
+// fn would leave a half-written conversion sitting in the fakes and report it as
+// intended state, so the tests that exist to prove nothing is left behind would
+// pass against a service that had never been made transactional at all.
+type fakeUnitOfWork struct {
+	participants *fakeParticipantRepo
+	leads        *fakeLeadRepo
+	portalUsers  *fakePortalUserRepo
+	// Committed and RolledBack count outcomes, so a test can tell "the unit
+	// rolled back" apart from "the unit was never entered".
+	Committed  int
+	RolledBack int
+}
+
+// snapshotRows copies a fake's rows aside and returns the undo. Values are
+// deep-copied because operations mutate rows in place, and a restore that shared
+// them would hand back rows already carrying the changes it was meant to undo.
+func snapshotRows[T any](rows *map[string]*T, order *[]string) func() {
+	saved := make(map[string]*T, len(*rows))
+	for id, row := range *rows {
+		clone := *row
+		saved[id] = &clone
+	}
+	savedOrder := append([]string{}, *order...)
+	return func() { *rows, *order = saved, savedOrder }
+}
+
+func (u *fakeUnitOfWork) Do(ctx context.Context, fn func(context.Context, uow.Repos) error) error {
+	undo := []func(){
+		u.participants.snapshot(),
+		u.leads.snapshot(),
+		u.portalUsers.snapshot(),
+	}
+	if err := fn(ctx, uow.Repos{
+		Participants: u.participants,
+		Leads:        u.leads,
+		PortalUsers:  u.portalUsers,
+	}); err != nil {
+		for _, restore := range undo {
+			restore()
+		}
+		u.RolledBack++
+		return err
+	}
+	u.Committed++
+	return nil
+}
 
 // ─── user.Repository ──────────────────────────────────────────────────────────
 
@@ -234,7 +295,13 @@ type fakeLeadRepo struct {
 	// lead — a repository dying mid-request, which is what the runtime-resilience
 	// tests need in order to raise a panic from inside a real handler chain.
 	panicOnCreate any
+	// markConvertedErr fails only MarkConverted, so a test can break the last
+	// step of a conversion while the earlier ones succeed.
+	markConvertedErr error
 }
+
+// FailMarkConverted makes every subsequent MarkConverted return err.
+func (r *fakeLeadRepo) FailMarkConverted(err error) { r.markConvertedErr = err }
 
 // LeadStatusChange is one recorded UpdateStatus call.
 type LeadStatusChange struct {
@@ -349,12 +416,20 @@ func (r *fakeLeadRepo) AssignTo(_ context.Context, leadID, consultantID string) 
 }
 
 func (r *fakeLeadRepo) MarkConverted(_ context.Context, leadID string) error {
+	if r.markConvertedErr != nil {
+		return r.markConvertedErr
+	}
 	if r.err != nil {
 		return r.err
 	}
 	l, ok := r.leads[leadID]
 	if !ok {
 		return errNotFound
+	}
+	// Only from 'deal', as the Postgres UPDATE's WHERE clause enforces — that
+	// condition is what stops one lead becoming two participants.
+	if l.Status != "deal" {
+		return domainLead.ErrNotConvertible
 	}
 	now := time.Now()
 	l.ConvertedAt = &now
@@ -373,6 +448,15 @@ func (r *fakeLeadRepo) CountActiveByConsultant(_ context.Context, consultantID s
 		}
 	}
 	return n, nil
+}
+
+func (r *fakeLeadRepo) snapshot() func() {
+	restoreRows := snapshotRows(&r.leads, &r.order)
+	changes := append([]LeadStatusChange{}, r.StatusChanges...)
+	return func() {
+		restoreRows()
+		r.StatusChanges = changes
+	}
 }
 
 // ─── lead.NoteRepository ──────────────────────────────────────────────────────
@@ -569,6 +653,10 @@ func (r *fakeParticipantRepo) ListWithUnpaidInvoiceDaysOld(_ context.Context, _ 
 	return nil, nil
 }
 
+func (r *fakeParticipantRepo) snapshot() func() {
+	return snapshotRows(&r.participants, &r.order)
+}
+
 // ─── portaluser.Repository ────────────────────────────────────────────────────
 
 type fakePortalUserRepo struct {
@@ -634,6 +722,10 @@ func (r *fakePortalUserRepo) UpdatePassword(_ context.Context, id, passwordHash 
 	}
 	u.PasswordHash = passwordHash
 	return nil
+}
+
+func (r *fakePortalUserRepo) snapshot() func() {
+	return snapshotRows(&r.users, &r.order)
 }
 
 // ─── invoice.Repository ───────────────────────────────────────────────────────

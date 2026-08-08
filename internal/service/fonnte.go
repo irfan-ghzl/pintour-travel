@@ -26,6 +26,11 @@ func NewFonnteService(apiToken string, repo notification.Repository) *FonnteServ
 	}
 }
 
+// Enabled reports whether a gateway is configured. Send is a no-op without one,
+// so a caller that tells a user "we messaged them" has to ask first — mirrors
+// StorageService.Enabled.
+func (s *FonnteService) Enabled() bool { return s != nil && s.repo != nil && s.apiToken != "" }
+
 type fonntePayload struct {
 	Target      string `json:"target"`
 	Message     string `json:"message"`
@@ -187,10 +192,44 @@ func (s *FonnteService) SendDocRequest(ctx context.Context, phone, name, package
 			"Langkah selanjutnya, silakan upload dokumen yang diperlukan melalui:\n"+
 			"🔗 %s\n\n"+
 			"Username: nomor WA Anda\n"+
-			"Password: dikirim via pesan terpisah\n\n"+
+			// The password went out in its own message when the account was
+			// created (PORTAL_CREDENTIALS). This used to promise a separate
+			// message that nothing ever sent.
+			"Password: sesuai pesan *Akun Portal Pintour Anda* yang kami kirim sebelumnya\n\n"+
 			"Harap lengkapi sebelum H-14 keberangkatan.", name, packageName, portalLink)
 	refType := "participant"
 	return s.Send(ctx, phone, name, notification.TypeDocRequest, msg, &participantID, &refType)
+}
+
+// SendPortalCredentials hands a newly converted participant the temporary
+// password for their portal account (FR-PORTAL-01).
+//
+// The portal has no password-reset flow, so this message is the only copy of the
+// credential that ever leaves the system — the raw password is hashed the moment
+// it is generated and is never stored anywhere it could be read back.
+func (s *FonnteService) SendPortalCredentials(ctx context.Context, phone, name, password, portalLink, participantID string) error {
+	refType := "participant"
+	return s.Send(ctx, phone, name, notification.TypePortalCredentials,
+		portalCredentialsMessage(name, phone, password, portalLink), &participantID, &refType)
+}
+
+// portalCredentialsMessage renders the credential message.
+//
+// It is the one template split out from its Send wrapper, because it is the one
+// whose content is the feature: a message that loses the password still sends
+// successfully and still logs as delivered, and the participant it was for can
+// never get in. Rendering it separately is what lets that be asserted without a
+// gateway to send through.
+func portalCredentialsMessage(name, phone, password, portalLink string) string {
+	return fmt.Sprintf(
+		"🔐 *Akun Portal Pintour Anda*\n\n"+
+			"Halo *%s*, akun portal peserta Anda sudah dibuat.\n\n"+
+			"🔗 Portal: %s\n"+
+			"Username: *%s* (nomor WA ini)\n"+
+			"Password sementara: *%s*\n\n"+
+			"Simpan pesan ini baik-baik dan jangan bagikan ke siapa pun. "+
+			"Gunakan portal untuk mengunggah dokumen dan memantau status keberangkatan Anda.",
+		name, portalLink, phone, password)
 }
 
 // SendDocRejected notifies participant when a document is rejected (DOC_REJECTED).
