@@ -43,6 +43,6 @@ Dikerjakan dengan pola expand: pengikat JSON bersama mulai memanggil validator l
 - Cabang form-encoded pada webhook Fonnte (`chatbot_handler.go`) tidak melewati `bindJSON` sama sekali dan galat cabang JSON-nya dibuang. Itu jalur masuk dari gateway, bukan masukan pengguna, dan Fonnte adalah materi tiket 08.
 - `ReviewProof` dan `ReviewDocument` memakai bentuk payload yang nyaris identik (`status` + alasan penolakan). Menyatukannya jadi satu tipe bersama menahan diri karena nama field JSON-nya berbeda (`notes` vs `rejection_reason`) dan penyatuan akan mengubah kontrak salah satunya.
 
-**Cacat di luar cakupan yang perlu tiket sendiri.** Formulir invoice admin mengirim `due_date` sebagai `YYYY-MM-DD` dari `<input type="date">`, sedangkan `time.Time` hanya menerima RFC3339 — pembuatan invoice dari UI gagal dekode sebelum dan sesudah tiket ini. Bukan regresi, tapi berarti `POST /admin/invoices` tidak pernah berhasil dari antarmuka.
+**Cacat di luar cakupan yang perlu tiket sendiri → sekarang tiket 14.** Formulir invoice admin mengirim `due_date` sebagai `YYYY-MM-DD` dari `<input type="date">`, sedangkan `time.Time` hanya menerima RFC3339 — pembuatan invoice dari UI gagal dekode sebelum dan sesudah tiket ini. Penelusuran lanjutan menemukan formulir batch keberangkatan punya cacat yang sama pada `departure_date`/`return_date`. Bukan regresi dari tiket manapun, dan tidak tercakup tiket 01–13; diangkat sebagai tiket 14.
 
 **Coverage.** 24,4% → **33,2%**.
