@@ -234,11 +234,24 @@ func (s *Service) GeneratePDF(ctx context.Context, invoiceID string) ([]byte, er
 	return pdfBytes, nil
 }
 
-// ConfirmPayment confirms payment, activates portal, sends doc request WA.
+// ConfirmPayment marks an invoice paid in full by hand, for the cases no proof
+// covers — cash at the office, a transfer reconciled off-system.
+//
+// It no longer sends the document request itself. That message belongs to the
+// moment an invoice becomes fully paid, and it is sent there, by whichever path
+// got it there. Sending it here as well meant an admin who confirmed an invoice
+// that a proof had already settled sent the participant the same instructions
+// twice.
+//
+// An invoice already settled is left alone rather than confirmed again, so the
+// second confirmation is a no-op instead of a second round of notifications.
 func (s *Service) ConfirmPayment(ctx context.Context, invoiceID, confirmedBy, portalBaseURL string) error {
 	inv, err := s.invoices.GetByID(ctx, invoiceID)
 	if err != nil {
 		return err
+	}
+	if inv.Status == "lunas" {
+		return nil
 	}
 	if err := s.invoices.Confirm(ctx, invoiceID, confirmedBy); err != nil {
 		return err
@@ -246,16 +259,9 @@ func (s *Service) ConfirmPayment(ctx context.Context, invoiceID, confirmedBy, po
 	if err := s.participants.Activate(ctx, inv.ParticipantID); err != nil {
 		return err
 	}
-	safe.Go("kirim permintaan dokumen", func() {
-		bgCtx := context.Background()
-		pt, err := s.participants.GetByID(bgCtx, inv.ParticipantID)
-		if err != nil {
-			return
-		}
-		portalLink := portalBaseURL + "/portal/documents"
-		_ = s.fonnte.SendDocRequest(bgCtx, pt.Phone, pt.Name,
-			pt.PackageName, portalLink, pt.ID)
-	})
+	(&settlement{
+		invoice: inv, amount: inv.Amount, fullyPaid: true, portalBaseURL: portalBaseURL,
+	}).notify(s)
 	return nil
 }
 
@@ -425,6 +431,14 @@ func (s *Service) notifyPaymentReceived(inv *domainInvoice.Invoice, amountClaime
 	if fullyPaid {
 		portalLink := portalBaseURL + "/portal"
 		_ = s.fonnte.SendPortalActivated(ctx, pt.Phone, pt.Name, pt.Phone, portalLink, pt.ID)
+		// FR-AUTO-04 and diagram §14.5.3: the participant gets the document list
+		// over WhatsApp once payment is confirmed. Only the old manual-confirm
+		// endpoint sent it, so a payment settled by an approved proof or by the
+		// gateway — which is most of them — told the participant nothing about
+		// what to do next. It lives here because this is where "the invoice is
+		// now fully paid" is decided, whichever path decided it.
+		_ = s.fonnte.SendDocRequest(ctx, pt.Phone, pt.Name, pt.PackageName,
+			portalLink+"/documents", pt.ID)
 		if s.email != nil && pt.Email != "" {
 			_ = s.email.SendEmailPortalActivated(ctx, pt.Email, pt.Name, pt.Phone, portalLink)
 			// §3.2 doc-request email — daftar dokumen ada di portal (resolved dinamis).

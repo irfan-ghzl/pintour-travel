@@ -39,15 +39,13 @@ package httpdelivery
 //     exercised only in its no-op mode; asserting what they would have sent
 //     needs its own seam.
 //
-//  3. A third gap, found while building this harness and not anticipated by the
-//     spec: FonnteService.Send returns at "apiToken == ''" BEFORE it writes the
-//     notification row, and its endpoint is hardcoded. So no WhatsApp message
-//     sent through the seam reaches h.Notifications — that fake stays empty, and
-//     giving the harness a token would put the tests on the network instead.
-//     Asserting which notifications a flow sends therefore needs Fonnte to gain
-//     the same settable base URL the payment gateway just got. That is beyond
-//     what this ticket permits, so it is carried as the first acceptance
-//     criterion of ticket 08, whose remaining work depends on it.
+//  3. CLOSED by tiket 08. WhatsApp sends were unobservable — FonnteService.Send
+//     returned at "apiToken == ''" BEFORE writing its notification row, and its
+//     endpoint was hardcoded, so h.Notifications stayed empty whatever a flow
+//     sent. service.WithFonnteBaseURL now lets withFonnteServer point the client
+//     at a local stand-in with a fake token, and Send runs the whole way through
+//     without touching the network. Tests that do not pass the option still get
+//     the tokenless no-op, which is what a deployment without a gateway does.
 //
 // One caveat rather than a gap: EmailService.Send with an empty key returns an
 // error instead of no-opping like the others. Every current caller discards it
@@ -133,6 +131,8 @@ type harnessConfig struct {
 	chatbotToken      string
 	storageBaseURL    string
 	storageServiceKey string
+	fonnteBaseURL     string
+	fonnteToken       string
 }
 
 // withMidtransServer enables the payment gateway and points it at baseURL —
@@ -161,6 +161,19 @@ func withStorageServer(baseURL string) harnessOption {
 	return func(c *harnessConfig) {
 		c.storageBaseURL = baseURL
 		c.storageServiceKey = "storage-key-test"
+	}
+}
+
+// withFonnteServer enables the WhatsApp gateway and points it at baseURL —
+// normally an httptest.Server standing in for Fonnte. Without it the adapter
+// stays tokenless and Send returns before writing anything, which is why
+// h.Notifications used to be empty no matter what a flow sent (gap 3 above).
+// With it, Send runs the whole way through — writes the row, posts, updates the
+// status — and never leaves the machine.
+func withFonnteServer(baseURL string) harnessOption {
+	return func(c *harnessConfig) {
+		c.fonnteBaseURL = baseURL
+		c.fonnteToken = "fonnte-token-test"
 	}
 }
 
@@ -217,7 +230,8 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 	// already has in production, so nothing reaches the network. The two that a
 	// test may point at a local httptest server (payment gateway, storage) stay
 	// unconfigured unless the corresponding option was passed.
-	fonnte := service.NewFonnteService("", h.Notifications)
+	fonnte := service.NewFonnteService(cfg.fonnteToken, h.Notifications,
+		service.WithFonnteBaseURL(cfg.fonnteBaseURL))
 	email := service.NewEmailService("", "")
 	storage := service.NewStorageService(cfg.storageBaseURL, cfg.storageServiceKey)
 	pdf := service.NewPDFService()

@@ -70,11 +70,7 @@ func (h *PortalHandler) notifyAdmins(ctx context.Context, send func(adminEmail s
 	if h.email == nil || h.users == nil {
 		return
 	}
-	admins, err := h.users.ListByRole(ctx, "admin")
-	if err != nil {
-		return
-	}
-	for _, a := range admins {
+	for _, a := range domainUser.ListAdmins(ctx, h.users) {
 		if a.Email != "" {
 			send(a.Email)
 		}

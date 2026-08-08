@@ -104,15 +104,60 @@ func (s *Scheduler) sendPaymentReminders() {
 		{6, "6 hari"},
 	}
 	for _, r := range reminders {
-		pts, err := s.participants.ListWithUnpaidInvoiceDaysOld(ctx, r.days)
-		if err != nil {
-			continue
-		}
-		for _, p := range pts {
-			_ = s.fonnte.SendPaymentReminder(ctx, p.Phone, p.Name, "", r.dayLabel, p.ID)
+		// Read the invoice, not just the participant. The old call passed an empty
+		// invoice number — so the message named no invoice, leaving a participant
+		// with two unpaid ones no way to tell which was meant — and passed the
+		// PARTICIPANT id as the reference while labelling it "invoice", which
+		// broke the trail from an invoice to the messages sent about it.
+		for _, due := range s.unpaidInvoiceReminders(ctx, r.days) {
+			if due.phone == "" {
+				continue
+			}
+			_ = s.fonnte.SendPaymentReminder(ctx, due.phone, due.name,
+				due.invoiceNumber, r.dayLabel, due.invoiceID)
 			time.Sleep(time.Second) // §17.2 rate-limit Fonnte
 		}
 	}
+}
+
+// unpaidInvoiceReminder is one participant to nudge about one invoice.
+type unpaidInvoiceReminder struct {
+	invoiceID     string
+	invoiceNumber string
+	name          string
+	phone         string
+}
+
+// unpaidInvoiceReminders lists the unpaid invoices issued `days` days ago along
+// with who to tell, deduped against a reminder of the same kind already sent for
+// that invoice today — the same marker pattern the overdue and quota jobs use.
+func (s *Scheduler) unpaidInvoiceReminders(ctx context.Context, days int) []unpaidInvoiceReminder {
+	if s.db == nil {
+		return nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT i.id, i.invoice_number, p.name, COALESCE(p.phone,'')
+		FROM invoices i
+		JOIN participants p ON p.id = i.participant_id
+		WHERE i.deleted_at IS NULL
+		  AND i.status IN ('diterbitkan','menunggu_bayar')
+		  AND i.created_at::date = (NOW() - ($1 || ' days')::interval)::date
+		ORDER BY i.created_at`, days)
+	if err != nil {
+		log.Printf("sendPaymentReminders query (H+%d): %v", days, err)
+		return nil
+	}
+	defer rows.Close()
+
+	var out []unpaidInvoiceReminder
+	for rows.Next() {
+		var r unpaidInvoiceReminder
+		if err := rows.Scan(&r.invoiceID, &r.invoiceNumber, &r.name, &r.phone); err != nil {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 // sendDepartureReminders sends WA blasts at H-30/H-14/H-7/H-1.

@@ -103,14 +103,16 @@ func (s *Service) CreateLead(ctx context.Context, l *domainLead.Lead) error {
 			if appURL == "" {
 				appURL = "http://localhost:5173"
 			}
-			if admins, err := s.users.ListByRole(bgCtx, "admin"); err == nil {
-				for _, a := range admins {
-					if a.Email == "" {
-						continue
-					}
-					_ = s.email.SendEmailAdminNewLeads(bgCtx, a.Email,
-						l.Name, l.Phone, l.Email, l.PackageName, appURL+"/admin/leads")
+			for _, a := range domainUser.ListAdmins(bgCtx, s.users) {
+				if a.Email == "" {
+					continue
 				}
+				// full, not l: PackageName is joined by the read, and the struct
+				// that went INTO Create never had it — so this email used to name
+				// no package at all, which is the one thing a consultant needs
+				// before picking up the phone.
+				_ = s.email.SendEmailAdminNewLeads(bgCtx, a.Email,
+					full.Name, full.Phone, full.Email, full.PackageName, appURL+"/admin/leads")
 			}
 		}
 	})

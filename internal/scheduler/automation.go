@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/irfan-ghzl/pintour-travel/internal/domain/notification"
 	domainUser "github.com/irfan-ghzl/pintour-travel/internal/domain/user"
 	"github.com/irfan-ghzl/pintour-travel/internal/service"
 )
@@ -151,8 +152,16 @@ func (s *Scheduler) expireInvoices() {
 	digest := make([]service.OverdueInvoiceRow, 0, len(list))
 	for _, o := range list {
 		if o.phone != "" {
+			// Writes the PAYMENT_OVERDUE row this job dedupes on.
 			_ = s.fonnte.SendPaymentOverdue(ctx, o.phone, o.name, o.number, adminContact, o.id)
 			time.Sleep(time.Second)
+		} else {
+			// No phone means no WhatsApp send, and the marker row came from the
+			// send — so the dedup found nothing and a participant without a
+			// number was emailed the same overdue notice every single day. The
+			// marker is recorded either way, following the pattern the quota
+			// warning already uses.
+			s.markNotified(ctx, o.id, notification.TypePaymentOverdue, o.name)
 		}
 		if s.email != nil && o.email != "" {
 			_ = s.email.SendEmailPaymentOverdue(ctx, o.email, o.name, o.number, adminContact)
@@ -270,19 +279,25 @@ func (s *Scheduler) RunJobNow(name string) error {
 	return nil
 }
 
-// getAdmins returns active admin + super_admin users.
+// markNotified records that a notification of this kind went out for a
+// reference, without there having been a WhatsApp send to record it.
+//
+// The dedup guards in this file all read wa_notifications, and that row is
+// normally written as a side effect of sending. When there is nothing to send —
+// a participant with no number — the marker has to be written anyway, or the job
+// re-runs the rest of its work for that row every day forever.
+func (s *Scheduler) markNotified(ctx context.Context, referenceID, messageType, recipientName string) {
+	_, _ = s.db.ExecContext(ctx, `
+		INSERT INTO wa_notifications
+		(id,recipient_phone,recipient_name,message_type,message_content,reference_id,reference_type,status,created_at)
+		VALUES (gen_random_uuid(),'-',$1,$2,$3,$4,'invoice','skipped',NOW())`,
+		recipientName, messageType,
+		"Tidak dikirim via WA: peserta tidak memiliki nomor WhatsApp", referenceID)
+}
+
+// getAdmins returns the users who receive admin notifications (§17.2.2).
 func (s *Scheduler) getAdmins(ctx context.Context) []domainUser.User {
-	if s.users == nil {
-		return nil
-	}
-	var out []domainUser.User
-	for _, role := range []string{"admin", "super_admin"} {
-		us, err := s.users.ListByRole(ctx, role)
-		if err == nil {
-			out = append(out, us...)
-		}
-	}
-	return out
+	return domainUser.ListAdmins(ctx, s.users)
 }
 
 func envOr(key, def string) string {
