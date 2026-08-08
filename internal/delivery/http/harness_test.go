@@ -45,8 +45,9 @@ package httpdelivery
 //     sent through the seam reaches h.Notifications — that fake stays empty, and
 //     giving the harness a token would put the tests on the network instead.
 //     Asserting which notifications a flow sends therefore needs Fonnte to gain
-//     the same settable base URL the payment gateway just got, which is beyond
-//     what this ticket permits.
+//     the same settable base URL the payment gateway just got. That is beyond
+//     what this ticket permits, so it is carried as the first acceptance
+//     criterion of ticket 08, whose remaining work depends on it.
 //
 // One caveat rather than a gap: EmailService.Send with an empty key returns an
 // error instead of no-opping like the others. Every current caller discards it
