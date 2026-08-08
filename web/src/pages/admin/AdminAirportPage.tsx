@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Luggage, Ticket, FileCheck, Loader2, Send, FileText } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -16,6 +16,20 @@ export default function AdminAirportPage() {
     gather_point: '', gather_time: '', gate: '', checkin_time: '',
   })
   const qc = useQueryClient()
+
+  // Checklist rows are prepared once per batch, as their own action. The read
+  // below polls every ten seconds, and it used to prepare them on the way past —
+  // so one open tab wrote across the whole batch six times a minute. Idempotent
+  // server-side, guarded by a ref here so React's double-invoked effects in
+  // development do not fire it twice.
+  const initialised = useRef('')
+  useEffect(() => {
+    if (!batchID || initialised.current === batchID) return
+    initialised.current = batchID
+    api.post('/admin/airport/checklist/init', { batch_id: batchID })
+      .then(() => qc.invalidateQueries({ queryKey: ['airport-checklist'] }))
+      .catch(() => toast.error('Gagal menyiapkan checklist bandara'))
+  }, [batchID, qc])
 
   const { data, isLoading, isFetching } = useQuery({
     queryKey: ['airport-checklist', batchID, statusFilter],

@@ -42,9 +42,15 @@ type CountryRequirement struct {
 }
 
 // Filter for listing documents.
+//
+// Page/PerPage were the only list filter in the system without them: the review
+// page fetched every document ever uploaded to show twenty, and the dashboard
+// fetched all of them to count them.
 type Filter struct {
 	ParticipantID *string
 	Status        *string
+	Page          int
+	PerPage       int
 }
 
 // TODO(ocr-v2.0-F3): OCRResult — aktifkan ketika GCP Vision billing on.

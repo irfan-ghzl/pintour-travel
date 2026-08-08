@@ -23,8 +23,8 @@ type DocumentHandler struct {
 	fonnte       *service.FonnteService
 	email        *service.EmailService
 	// TODO(ocr-v2.0-F3): re-enable fields below when GCP Vision billing active
-	ocr          *service.OCRService
-	ocrRepo      document.OCRResultRepository
+	ocr     *service.OCRService
+	ocrRepo document.OCRResultRepository
 }
 
 func NewDocumentHandler(
@@ -74,18 +74,47 @@ func (h *DocumentHandler) ListByParticipant(c echo.Context) error {
 // @Success      200 {object} map[string]interface{}
 // @Router       /admin/documents [get]
 func (h *DocumentHandler) ListAllDocuments(c echo.Context) error {
-	var f document.Filter
+	ctx := c.Request().Context()
+	f := document.Filter{
+		Page:    queryInt(c, "page", 1),
+		PerPage: queryPageSize(c, "per_page", 20),
+	}
 	if s := c.QueryParam("status"); s != "" {
 		f.Status = &s
 	}
 	if pid := c.QueryParam("participant_id"); pid != "" {
 		f.ParticipantID = &pid
 	}
-	docs, err := h.docs.List(c.Request().Context(), f)
+	docs, total, err := h.docs.List(ctx, f)
 	if err != nil {
 		return serverErr(c, err)
 	}
-	return c.JSON(http.StatusOK, ok(docs))
+
+	response := pageResponse(docs, total, f.Page, f.PerPage)
+	// The review page's "N of M approved" summary describes every document of
+	// the participant being reviewed, not the page or the status filter in front
+	// of it — counting the filtered rows made the figure agree with itself and
+	// with nothing else.
+	if f.ParticipantID != nil {
+		if summary, err := h.reviewSummary(ctx, *f.ParticipantID); err == nil {
+			response["summary"] = summary
+		}
+	}
+	return c.JSON(http.StatusOK, response)
+}
+
+// reviewSummary counts a participant's documents by outcome, ignoring whatever
+// filter the reviewer is looking through.
+func (h *DocumentHandler) reviewSummary(ctx context.Context, participantID string) (map[string]int, error) {
+	all, err := h.docs.ListByParticipant(ctx, participantID)
+	if err != nil {
+		return nil, err
+	}
+	summary := map[string]int{"total": len(all), "disetujui": 0, "menunggu": 0, "ditolak": 0}
+	for _, d := range all {
+		summary[d.Status]++
+	}
+	return summary, nil
 }
 
 func (h *DocumentHandler) UploadDocument(c echo.Context) error {
@@ -145,11 +174,8 @@ func (h *DocumentHandler) ReviewDocument(c echo.Context) error {
 		reason := body.RejectionReason
 		safe.Go("notifikasi dokumen ditolak", func() {
 			bgCtx := context.Background()
-			// Reload doc to get participant_id (we know it from URL param, but need participant data)
-			docs, err := h.docs.ListByParticipant(bgCtx, "")
-			_ = docs
-			_ = err
-			// Easier path: lookup the document directly to get participant
+			// The document is reloaded for its participant id; the URL only
+			// carries the document's own.
 			doc, err := h.docs.GetByID(bgCtx, docID)
 			if err != nil || doc == nil {
 				return

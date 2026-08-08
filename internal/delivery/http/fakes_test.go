@@ -1353,11 +1353,11 @@ func (r *fakeDocumentRepo) GetByID(_ context.Context, id string) (*document.Docu
 	return d, nil
 }
 
-func (r *fakeDocumentRepo) List(_ context.Context, f document.Filter) ([]document.Document, error) {
+func (r *fakeDocumentRepo) List(_ context.Context, f document.Filter) ([]document.Document, int, error) {
 	if r.err != nil {
-		return nil, r.err
+		return nil, 0, r.err
 	}
-	out := []document.Document{}
+	matched := []document.Document{}
 	for _, id := range r.order {
 		d := r.documents[id]
 		if f.ParticipantID != nil && d.ParticipantID != *f.ParticipantID {
@@ -1366,13 +1366,53 @@ func (r *fakeDocumentRepo) List(_ context.Context, f document.Filter) ([]documen
 		if f.Status != nil && d.Status != *f.Status {
 			continue
 		}
-		out = append(out, *d)
+		matched = append(matched, *d)
 	}
-	return out, nil
+
+	total := len(matched)
+	if f.Page < 1 {
+		f.Page = 1
+	}
+	if f.PerPage < 1 {
+		f.PerPage = 20
+	}
+	start := (f.Page - 1) * f.PerPage
+	if start >= total {
+		return []document.Document{}, total, nil
+	}
+	end := start + f.PerPage
+	if end > total {
+		end = total
+	}
+	return matched[start:end], total, nil
 }
 
-func (r *fakeDocumentRepo) ListByParticipant(ctx context.Context, participantID string) ([]document.Document, error) {
-	return r.List(ctx, document.Filter{ParticipantID: &participantID})
+func (r *fakeDocumentRepo) CountByStatus(_ context.Context, status string) (int, error) {
+	if r.err != nil {
+		return 0, r.err
+	}
+	n := 0
+	for _, d := range r.documents {
+		if d.Status == status {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// ListByParticipant is unpaginated by contract: it feeds the review summary,
+// which has to count every one of a participant's documents.
+func (r *fakeDocumentRepo) ListByParticipant(_ context.Context, participantID string) ([]document.Document, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	out := []document.Document{}
+	for _, id := range r.order {
+		if d := r.documents[id]; d.ParticipantID == participantID {
+			out = append(out, *d)
+		}
+	}
+	return out, nil
 }
 
 func (r *fakeDocumentRepo) Review(_ context.Context, id, status, reviewedBy, rejectionReason string) error {

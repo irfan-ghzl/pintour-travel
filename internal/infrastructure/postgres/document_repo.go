@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/document"
@@ -40,30 +41,58 @@ func (r *documentRepo) GetByID(ctx context.Context, id string) (*document.Docume
 	return &d, nil
 }
 
-func (r *documentRepo) List(ctx context.Context, f document.Filter) ([]document.Document, error) {
+func (r *documentRepo) List(ctx context.Context, f document.Filter) ([]document.Document, int, error) {
+	// One where-clause, built once and used by both the count and the page, so
+	// the total can never describe a different set from the rows.
+	where := "WHERE d.deleted_at IS NULL"
 	args := []interface{}{}
-	q := `SELECT d.id,d.participant_id,d.document_type,d.file_path,d.file_name,
+	if f.ParticipantID != nil {
+		args = append(args, *f.ParticipantID)
+		where += fmt.Sprintf(" AND d.participant_id=$%d", len(args))
+	}
+	if f.Status != nil {
+		args = append(args, *f.Status)
+		where += fmt.Sprintf(" AND d.status=$%d", len(args))
+	}
+
+	var total int
+	if err := r.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM documents d "+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	if f.Page < 1 {
+		f.Page = 1
+	}
+	if f.PerPage < 1 {
+		f.PerPage = 20
+	}
+	args = append(args, f.PerPage, (f.Page-1)*f.PerPage)
+
+	q := fmt.Sprintf(`SELECT d.id,d.participant_id,d.document_type,d.file_path,d.file_name,
 		d.status,COALESCE(d.rejection_reason,''),d.reviewed_by,d.uploaded_at,d.reviewed_at,
 		COALESCE(p.name,'')
 		FROM documents d
-		LEFT JOIN participants p ON p.id=d.participant_id`
-	if f.ParticipantID != nil && f.Status != nil {
-		q += " WHERE d.participant_id=$1 AND d.status=$2"
-		args = append(args, *f.ParticipantID, *f.Status)
-	} else if f.ParticipantID != nil {
-		q += " WHERE d.participant_id=$1"
-		args = append(args, *f.ParticipantID)
-	} else if f.Status != nil {
-		q += " WHERE d.status=$1"
-		args = append(args, *f.Status)
-	}
-	q += " ORDER BY d.uploaded_at DESC"
+		LEFT JOIN participants p ON p.id=d.participant_id
+		%s ORDER BY d.uploaded_at DESC LIMIT $%d OFFSET $%d`,
+		where, len(args)-1, len(args))
+
 	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
-	return scanDocuments(rows)
+	list, err := scanDocuments(rows)
+	return list, total, err
+}
+
+// CountByStatus counts without reading. The admin dashboard used to fetch every
+// pending document in order to take len() of the slice.
+func (r *documentRepo) CountByStatus(ctx context.Context, status string) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM documents WHERE status=$1 AND deleted_at IS NULL`, status).Scan(&n)
+	return n, err
 }
 
 func (r *documentRepo) ListByParticipant(ctx context.Context, participantID string) ([]document.Document, error) {
@@ -97,7 +126,7 @@ func (r *documentRepo) Delete(ctx context.Context, id string) error {
 }
 
 func scanDocuments(rows *sql.Rows) ([]document.Document, error) {
-	var list []document.Document
+	list := []document.Document{}
 	for rows.Next() {
 		var d document.Document
 		if err := rows.Scan(&d.ID, &d.ParticipantID, &d.DocumentType, &d.FilePath,
@@ -119,16 +148,19 @@ func NewCountryRequirementRepo(db *sql.DB) document.CountryRequirementRepository
 }
 
 func (r *countryRequirementRepo) List(ctx context.Context, countryCode string) ([]document.CountryRequirement, error) {
+	// An empty countryCode means "list every requirement" (admin global view);
+	// a non-empty one filters to that country (public per-country view).
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id,country_code,country_name,document_type,is_required,
 		COALESCE(description,''),created_at
 		FROM country_document_requirements
-		WHERE country_code=$1 ORDER BY is_required DESC,document_type`, countryCode)
+		WHERE ($1 = '' OR country_code = $1)
+		ORDER BY country_code,is_required DESC,document_type`, countryCode)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var list []document.CountryRequirement
+	list := []document.CountryRequirement{}
 	for rows.Next() {
 		var cr document.CountryRequirement
 		if err := rows.Scan(&cr.ID, &cr.CountryCode, &cr.CountryName, &cr.DocumentType,

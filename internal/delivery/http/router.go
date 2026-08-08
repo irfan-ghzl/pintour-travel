@@ -81,7 +81,7 @@ func RegisterRoutes(e *echo.Echo, svc Services) {
 	paxH := NewParticipantHandler(svc.Participant, svc.PortalURL)
 	invH := NewInvoiceHandler(svc.Invoice)
 	userH := NewUserHandler(svc.User, svc.UserRepo, svc.Email, svc.AppURL, svc.Production, svc.JWTExpiryHours)
-	airH := NewAirportHandler(svc.Airport, svc.Participants, svc.Fonnte, svc.PDF)
+	airH := NewAirportHandler(svc.Airport, svc.Participants, svc.Package, svc.TourLeaderRepo, svc.Fonnte, svc.PDF)
 	docH := NewDocumentHandler(svc.Document, svc.CountryReq, svc.Participants, svc.Airport, svc.Fonnte, svc.Email, svc.OCR, svc.OCRRepo)
 	tlH := NewTourLeaderHandler(svc.TourLeaderRepo)
 	portalH := NewPortalHandler(svc.Participant, svc.Invoice, svc.Package, svc.Document, svc.CountryReq, svc.TourLeaderRepo, svc.UserRepo, svc.PDF, svc.Email, svc.OCR, svc.JWTSecret)
@@ -236,6 +236,7 @@ func RegisterRoutes(e *echo.Echo, svc Services) {
 
 	// Airport handling — tour_leader included
 	airportG.GET("/airport/checklist", airH.ListChecklist)
+	airportG.POST("/airport/checklist/init", airH.InitChecklist) // eksplisit, bukan efek samping pembacaan
 	airportG.GET("/airport/report", airH.GetReport)
 	airportG.GET("/airport/report/pdf", airH.GetReportPDF) // FR-AIR-06
 	airportG.POST("/airport/confirm-departure", airH.ConfirmDeparture)

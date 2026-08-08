@@ -138,6 +138,16 @@ export interface LeadStatusChange {
   changed_at: string
 }
 
+// DocumentSummary counts a participant's documents across ALL of them, which is
+// what the "N of M approved" figure on the review page has to describe — not the
+// page or the status filter in front of it.
+export interface DocumentSummary {
+  total: number
+  disetujui: number
+  menunggu: number
+  ditolak: number
+}
+
 export interface CreateLeadRequest {
   name: string
   phone: string
