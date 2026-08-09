@@ -9,14 +9,13 @@ package httpdelivery
 
 import (
 	"encoding/json"
-	"net/http"
-	"testing"
-	"time"
-
+	"github.com/irfan-ghzl/pintour-travel/internal/domain/calendar"
 	domainInvoice "github.com/irfan-ghzl/pintour-travel/internal/domain/invoice"
 	domainPkg "github.com/irfan-ghzl/pintour-travel/internal/domain/package"
 	domainParticipant "github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/portaluser"
+	"net/http"
+	"testing"
 )
 
 // seedTwoPortalIdentities gives two unrelated customers one past trip each, so
@@ -26,10 +25,11 @@ func seedTwoPortalIdentities(h *harness) {
 		ID: "package-1", Name: "Umroh Reguler 9 Hari", Slug: "umroh-reguler",
 		Destination: "Arab Saudi", DurationDays: 9, Itinerary: json.RawMessage(`["Hari 1: tiba di Jeddah"]`), IsActive: true,
 	})
-	lastYear := time.Now().Add(-365 * 24 * time.Hour)
+	lastYear := calendar.Today().AddDays(-365)
+	lastYearAt := lastYear.Time()
 	h.Batches.Seed(domainPkg.PackageBatch{
 		ID: "batch-lama", PackageID: "package-1",
-		DepartureDate: lastYear, ReturnDate: lastYear.Add(9 * 24 * time.Hour),
+		DepartureDate: lastYear, ReturnDate: lastYear.AddDays(9),
 		Quota: 40, PriceDouble: 25000000, Status: "tersedia",
 	})
 
@@ -43,7 +43,7 @@ func seedTwoPortalIdentities(h *harness) {
 			ID: c.participant, PortalUserID: &portalUser, BatchID: "batch-lama",
 			Name: c.participant, Phone: c.phone, RoomType: "double",
 			Email: c.participant + "@pintour.test", IsActive: false,
-			BatchDepartureDate: &lastYear, PackageName: "Umroh Reguler 9 Hari",
+			BatchDepartureDate: &lastYearAt, PackageName: "Umroh Reguler 9 Hari",
 		})
 	}
 }
@@ -59,7 +59,7 @@ func TestMyTrips_PastTripsCarryACompletionBadge(t *testing.T) {
 	h.Invoices.Seed(domainInvoice.Invoice{
 		ID: "invoice-a", InvoiceNumber: "INV-202508-0001", ParticipantID: "participant-a",
 		BatchID: "batch-lama", Amount: 25000000, Status: "lunas",
-		DueDate: time.Now().Add(-300 * 24 * time.Hour),
+		DueDate: calendar.Today().AddDays(-300),
 	})
 
 	res := h.asParticipant("participant-a", "portal-user-a").GET("/api/v1/portal/my-trips")
@@ -128,7 +128,7 @@ func TestTripArtefacts_RefuseAnotherPortalIdentity(t *testing.T) {
 			h.Invoices.Seed(domainInvoice.Invoice{
 				ID: "invoice-b", InvoiceNumber: "INV-202508-0002", ParticipantID: "participant-b",
 				BatchID: "batch-lama", Amount: 25000000, Status: "lunas",
-				DueDate: time.Now().Add(-300 * 24 * time.Hour),
+				DueDate: calendar.Today().AddDays(-300),
 			})
 
 			h.asParticipant("participant-a", "portal-user-a").GET(path).

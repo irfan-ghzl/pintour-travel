@@ -4,6 +4,7 @@ import { useQuery, useMutation } from '@tanstack/react-query'
 import { MapPin, Clock, ChevronDown, ChevronUp, Send } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api, { getConsultationPrefill } from '../../utils/api'
+import { formatDate } from '../../utils/date'
 import type { PackageDetailResponse, CreateLeadRequest } from '../../types'
 
 export default function PackageDetailPage() {
@@ -221,7 +222,7 @@ export default function PackageDetailPage() {
                 <div className="space-y-2">
                   {batches.filter(b => b.status === 'tersedia').slice(0, 3).map((b) => (
                     <div key={b.id} className="flex items-center justify-between text-xs bg-gray-50 rounded px-3 py-2">
-                      <span>{new Date(b.departure_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                      <span>{formatDate(b.departure_date)}</span>
                       <span className="text-emerald-600 font-medium">Tersedia</span>
                     </div>
                   ))}

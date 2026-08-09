@@ -82,9 +82,6 @@ func (m *mockUserRepo) ListByRole(_ context.Context, _ string) ([]domainUser.Use
 func (m *mockUserRepo) ListKonsultan(_ context.Context) ([]domainUser.User, error) {
 	return m.consultants, nil
 }
-func (m *mockUserRepo) CountActiveleadsByConsultant(_ context.Context, _ string) (int, error) {
-	return 0, nil
-}
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 

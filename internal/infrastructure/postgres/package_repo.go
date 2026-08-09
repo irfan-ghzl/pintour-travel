@@ -123,8 +123,12 @@ func (r *packageRepo) List(ctx context.Context, f pkg.Filter) ([]pkg.Package, in
 		return nil, 0, err
 	}
 
-	if f.Page < 1 { f.Page = 1 }
-	if f.PerPage < 1 { f.PerPage = 20 }
+	if f.Page < 1 {
+		f.Page = 1
+	}
+	if f.PerPage < 1 {
+		f.PerPage = 20
+	}
 	offset := (f.Page - 1) * f.PerPage
 	args = append(args, f.PerPage, offset)
 	q := fmt.Sprintf("SELECT "+packageCols+" FROM packages %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d", where, i, i+1)

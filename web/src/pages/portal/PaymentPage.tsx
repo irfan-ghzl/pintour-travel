@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CreditCard, Loader2, CheckCircle, ArrowLeft } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { portalApi, createPortalPayment } from '../../utils/api'
+import { formatDate } from '../../utils/date'
 import type { Invoice } from '../../types'
 import StatusBadge from '../../components/StatusBadge'
 
@@ -139,7 +140,7 @@ export default function PaymentPage() {
         <div className="text-sm space-y-1.5 text-gray-700">
           <div className="flex justify-between"><span className="text-gray-500">No. Invoice</span><span className="font-mono">{invoice.invoice_number}</span></div>
           <div className="flex justify-between"><span className="text-gray-500">Paket</span><span>{invoice.package_name}</span></div>
-          <div className="flex justify-between"><span className="text-gray-500">Jatuh Tempo</span><span>{new Date(invoice.due_date).toLocaleDateString('id-ID')}</span></div>
+          <div className="flex justify-between"><span className="text-gray-500">Jatuh Tempo</span><span>{formatDate(invoice.due_date)}</span></div>
           <div className="flex justify-between items-center"><span className="text-gray-500">Status</span><StatusBadge status={invoice.status} /></div>
         </div>
 

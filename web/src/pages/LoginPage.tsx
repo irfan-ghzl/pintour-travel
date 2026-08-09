@@ -11,10 +11,12 @@ export default function LoginPage() {
   const [form, setForm] = useState<LoginRequest>({ email: '', password: '' })
   const [error, setError] = useState('')
 
-  const mutation = useMutation<{ data: LoginResponse }, Error, LoginRequest>({
+  const mutation = useMutation<{ data: { data: LoginResponse } }, Error, LoginRequest>({
     mutationFn: (data) => api.post('/auth/login', data),
     onSuccess: (res) => {
-      authStorage.setSession(res.data)
+      // Backend wraps the payload as { success, data }, so the LoginResponse
+      // (incl. role) lives at res.data.data — unwrapping res.data stored {}.
+      authStorage.setSession(res.data.data)
       navigate('/admin')
     },
     onError: () => setError('Email atau password salah.'),

@@ -193,8 +193,7 @@ func (h *PackageHandler) CreateBatch(c echo.Context) error {
 	if err := bindJSON(c, &b); err != nil {
 		return invalidPayload(c, err, "format tidak valid")
 	}
-	b.PackageID = c.Param("package_id")
-	if err := h.svc.CreateBatch(c.Request().Context(), &b); err != nil {
+	if err := h.svc.CreateBatch(c.Request().Context(), c.Param("package_id"), &b); err != nil {
 		return serverErr(c, err)
 	}
 	return c.JSON(http.StatusCreated, ok(b))

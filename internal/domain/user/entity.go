@@ -3,6 +3,8 @@ package user
 import (
 	"context"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // Roles lists the four staff roles of PRD §5.3, in privilege order. Keep in sync
@@ -44,6 +46,35 @@ type User struct {
 	IsActive  bool      `json:"is_active"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// Authenticate reports whether password matches the account's stored hash
+// (class diagram §14.4).
+//
+// It is a domain method rather than a service one because it needs nothing but
+// the user's own data: comparing a bcrypt hash is arithmetic, not I/O. Reading
+// the account and issuing a token stay in the application layer, which is why
+// Login still lives there.
+func (u *User) Authenticate(password string) bool {
+	if u == nil || u.Password == "" {
+		return false
+	}
+	return bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(password)) == nil
+}
+
+// HasRole reports whether the account holds one of the given roles (§14.4).
+// An empty list allows nobody — a route that named no role is a route nobody
+// should reach, not one everybody should.
+func (u *User) HasRole(roles ...string) bool {
+	if u == nil || u.Role == "" {
+		return false
+	}
+	for _, r := range roles {
+		if u.Role == r {
+			return true
+		}
+	}
+	return false
 }
 
 type TourLeader struct {

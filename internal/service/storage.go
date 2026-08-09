@@ -3,13 +3,12 @@ package service
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -44,8 +43,8 @@ func (s *StorageService) Enabled() bool { return s.enabled }
 
 // UploadResult is returned after a successful upload.
 type UploadResult struct {
-	Bucket   string
-	Path     string // bucket-relative path
+	Bucket    string
+	Path      string // bucket-relative path
 	PublicURL string // for public buckets
 }
 
@@ -65,12 +64,17 @@ func (s *StorageService) Upload(ctx context.Context, bucket, ownerID string, fil
 	}
 	defer file.Close()
 
-	ext := filepath.Ext(fileHeader.Filename)
-	cleanName := sanitizeFilename(strings.TrimSuffix(fileHeader.Filename, ext))
+	// The extension is sanitised as well as the stem. It used to be taken from
+	// the uploaded name verbatim and appended after the cleaning, so everything
+	// sanitizeFilename refused could be smuggled back in behind the last dot —
+	// including the slashes and dots that reach a different object entirely.
+	rawExt := filepath.Ext(fileHeader.Filename)
+	ext := sanitizeExtension(rawExt)
+	cleanName := sanitizeFilename(strings.TrimSuffix(fileHeader.Filename, rawExt))
 	objectPath := fmt.Sprintf("%s/%d-%s%s", ownerID, time.Now().UnixNano(), cleanName, ext)
 
-	url := fmt.Sprintf("%s/storage/v1/object/%s/%s", s.baseURL, bucket, objectPath)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, file)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		s.objectURL("object", bucket, objectPath), file)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +94,7 @@ func (s *StorageService) Upload(ctx context.Context, bucket, ownerID string, fil
 
 	publicURL := ""
 	if isPublicBucket(bucket) {
-		publicURL = fmt.Sprintf("%s/storage/v1/object/public/%s/%s", s.baseURL, bucket, objectPath)
+		publicURL = s.objectURL("object/public", bucket, objectPath)
 	}
 	return &UploadResult{Bucket: bucket, Path: objectPath, PublicURL: publicURL}, nil
 }
@@ -101,9 +105,9 @@ func (s *StorageService) SignedURL(ctx context.Context, bucket, objectPath strin
 	if !s.enabled {
 		return "", fmt.Errorf("storage not configured")
 	}
-	url := fmt.Sprintf("%s/storage/v1/object/sign/%s/%s", s.baseURL, bucket, objectPath)
 	body := fmt.Sprintf(`{"expiresIn": %d}`, expirySec)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBufferString(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		s.objectURL("object/sign", bucket, objectPath), bytes.NewBufferString(body))
 	if err != nil {
 		return "", err
 	}
@@ -119,10 +123,18 @@ func (s *StorageService) SignedURL(ctx context.Context, bucket, objectPath strin
 		return "", fmt.Errorf("supabase sign failed: %s", resp.Status)
 	}
 	respBody, _ := io.ReadAll(resp.Body)
-	// Response: {"signedURL": "/object/sign/bucket/path?token=..."}
-	signedPath := extractJSONField(string(respBody), "signedURL")
+	// Response: {"signedURL": "/object/sign/bucket/path?token=..."}. Supabase has
+	// shipped both spellings of the key, so both are accepted.
+	var signed struct {
+		SignedURLUpper string `json:"signedURL"`
+		SignedURLMixed string `json:"signedUrl"`
+	}
+	if err := json.Unmarshal(respBody, &signed); err != nil {
+		return "", fmt.Errorf("decode sign response: %w", err)
+	}
+	signedPath := signed.SignedURLUpper
 	if signedPath == "" {
-		signedPath = extractJSONField(string(respBody), "signedUrl")
+		signedPath = signed.SignedURLMixed
 	}
 	if signedPath == "" {
 		return "", fmt.Errorf("no signed URL in response")
@@ -135,8 +147,8 @@ func (s *StorageService) Delete(ctx context.Context, bucket, objectPath string) 
 	if !s.enabled {
 		return fmt.Errorf("storage not configured")
 	}
-	url := fmt.Sprintf("%s/storage/v1/object/%s/%s", s.baseURL, bucket, objectPath)
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete,
+		s.objectURL("object", bucket, objectPath), nil)
 	if err != nil {
 		return err
 	}
@@ -154,6 +166,28 @@ func (s *StorageService) Delete(ctx context.Context, bucket, objectPath string) 
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
+
+// objectURL builds a storage endpoint with every path component escaped.
+//
+// The components used to be pasted into the URL as-is. A bucket or object name
+// carrying a "?", "#" or "../" then changed which request was being made rather
+// than which object it named — and object names come from filenames a
+// participant chose.
+func (s *StorageService) objectURL(endpoint, bucket, objectPath string) string {
+	return fmt.Sprintf("%s/storage/v1/%s/%s/%s",
+		s.baseURL, endpoint, url.PathEscape(bucket), escapeObjectPath(objectPath))
+}
+
+// escapeObjectPath escapes each segment of a bucket-relative path, keeping the
+// separators between them — a stored path is several segments, and encoding its
+// slashes would name a single object whose name contains them.
+func escapeObjectPath(objectPath string) string {
+	segments := strings.Split(objectPath, "/")
+	for i, seg := range segments {
+		segments[i] = url.PathEscape(seg)
+	}
+	return strings.Join(segments, "/")
+}
 
 func isPublicBucket(bucket string) bool {
 	return bucket == "package-images" || bucket == "tour-leader-photos"
@@ -193,30 +227,23 @@ func sanitizeFilename(s string) string {
 	return out
 }
 
-// extractJSONField does a minimal extraction of a single string field
-// to avoid pulling in encoding/json for this micro-task.
-func extractJSONField(body, field string) string {
-	key := `"` + field + `":`
-	idx := strings.Index(body, key)
-	if idx == -1 {
+// sanitizeExtension reduces a file extension to a leading dot and letters and
+// digits, which is all any extension this service accepts consists of. An empty
+// or unrecognisable extension yields none at all rather than a guess.
+func sanitizeExtension(ext string) string {
+	if !strings.HasPrefix(ext, ".") {
 		return ""
 	}
-	rest := strings.TrimSpace(body[idx+len(key):])
-	if !strings.HasPrefix(rest, `"`) {
+	var b strings.Builder
+	b.WriteByte('.')
+	for _, r := range ext[1:] {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		}
+	}
+	if b.Len() == 1 {
 		return ""
 	}
-	rest = rest[1:]
-	end := strings.Index(rest, `"`)
-	if end == -1 {
-		return ""
-	}
-	return rest[:end]
-}
-
-// ComputeETag returns a simple HMAC tag (not used directly by Supabase but
-// available for integrity verification).
-func (s *StorageService) ComputeETag(content []byte) string {
-	h := hmac.New(sha256.New, []byte(s.serviceKey))
-	h.Write(content)
-	return hex.EncodeToString(h.Sum(nil))
+	return b.String()
 }

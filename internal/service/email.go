@@ -6,22 +6,48 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
+
+// defaultResendBaseURL is where transactional email goes in production.
+const defaultResendBaseURL = "https://api.resend.com"
 
 // EmailService sends transactional emails via Resend API.
 type EmailService struct {
 	apiKey   string
 	fromAddr string
+	baseURL  string
 	client   *http.Client
 }
 
-func NewEmailService(apiKey, fromAddr string) *EmailService {
-	return &EmailService{
+// EmailOption customizes an EmailService at construction.
+type EmailOption func(*EmailService)
+
+// WithEmailBaseURL points the service at a different host. Its only use is a
+// test server: it is what lets the eighteen §17.1 templates be checked for the
+// subject and the content they actually send, instead of only for the guard
+// that returns early when no API key is configured. Same shape as
+// WithFonnteBaseURL and WithMidtransBaseURL.
+func WithEmailBaseURL(baseURL string) EmailOption {
+	return func(s *EmailService) {
+		if baseURL != "" {
+			s.baseURL = strings.TrimRight(baseURL, "/")
+		}
+	}
+}
+
+func NewEmailService(apiKey, fromAddr string, opts ...EmailOption) *EmailService {
+	s := &EmailService{
 		apiKey:   apiKey,
 		fromAddr: fromAddr,
+		baseURL:  defaultResendBaseURL,
 		client:   &http.Client{Timeout: 15 * time.Second},
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 type resendPayload struct {
@@ -44,7 +70,7 @@ func (s *EmailService) Send(ctx context.Context, to, subject, htmlBody string) e
 	}
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		"https://api.resend.com/emails", bytes.NewBuffer(body))
+		s.baseURL+"/emails", bytes.NewBuffer(body))
 	if err != nil {
 		return err
 	}

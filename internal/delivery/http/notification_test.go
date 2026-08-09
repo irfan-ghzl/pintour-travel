@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/irfan-ghzl/pintour-travel/internal/domain/calendar"
 	domainInvoice "github.com/irfan-ghzl/pintour-travel/internal/domain/invoice"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/notification"
 	domainParticipant "github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
@@ -77,7 +78,7 @@ func seedFullyPayable(h *harness) {
 		ID: "invoice-1", InvoiceNumber: "INV-202608-0001",
 		ParticipantID: "participant-1", BatchID: "batch-1",
 		Amount: 10000000, Status: "menunggu_bayar", IssuedBy: "user-admin",
-		DueDate: time.Now().Add(7 * 24 * time.Hour),
+		DueDate: calendar.Today().AddDays(7),
 	})
 }
 

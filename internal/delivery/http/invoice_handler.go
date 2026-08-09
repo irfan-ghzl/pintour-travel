@@ -4,11 +4,11 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
-	"os"
 
 	"github.com/labstack/echo/v4"
 
 	invoicesvc "github.com/irfan-ghzl/pintour-travel/internal/application/invoice"
+	"github.com/irfan-ghzl/pintour-travel/internal/config"
 	domainInvoice "github.com/irfan-ghzl/pintour-travel/internal/domain/invoice"
 )
 
@@ -106,10 +106,7 @@ func (h *InvoiceHandler) CreateInvoice(c echo.Context) error {
 // @Success      200 {object} map[string]interface{}
 // @Router       /admin/invoices/{id}/confirm [post]
 func (h *InvoiceHandler) ConfirmPayment(c echo.Context) error {
-	portalBase := os.Getenv("PORTAL_BASE_URL")
-	if portalBase == "" {
-		portalBase = "http://localhost:3000"
-	}
+	portalBase := config.PortalBaseURL()
 	if err := h.svc.ConfirmPayment(c.Request().Context(), c.Param("id"), claimUserID(c), portalBase); err != nil {
 		return serverErr(c, err)
 	}
@@ -155,10 +152,7 @@ func (h *InvoiceHandler) ReviewProof(c echo.Context) error {
 	if err := bindJSON(c, &body); err != nil {
 		return invalidPayload(c, err, "status harus 'disetujui' atau 'ditolak'")
 	}
-	portalBase := os.Getenv("PORTAL_BASE_URL")
-	if portalBase == "" {
-		portalBase = "http://localhost:3000"
-	}
+	portalBase := config.PortalBaseURL()
 	// §1.4 + §1.3: settle payment (derive paid amount, activate portal when lunas)
 	// and notify the participant.
 	if err := h.svc.ReviewProofAndSettle(c.Request().Context(), c.Param("id"), c.Param("proof_id"),

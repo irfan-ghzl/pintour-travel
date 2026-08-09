@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, CheckCircle, Eye, XCircle, FileText } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api, { openSignedFile } from '../../utils/api'
+import { formatDate } from '../../utils/date'
 import type { Invoice, InvoiceStatus, PaginatedResponse, CreateInvoiceRequest, PaymentProof } from '../../types'
 
 const STATUS_COLORS: Record<InvoiceStatus, string> = {
@@ -116,7 +117,7 @@ export default function AdminInvoicesPage() {
                   Rp {inv.amount.toLocaleString('id-ID')}
                 </td>
                 <td className="px-4 py-3 text-gray-600 text-xs">
-                  {new Date(inv.due_date).toLocaleDateString('id-ID')}
+                  {formatDate(inv.due_date)}
                 </td>
                 <td className="px-4 py-3">
                   <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLORS[inv.status] ?? 'bg-gray-100 text-gray-700'}`}>
@@ -271,7 +272,7 @@ function InvoiceDetailModal({
           <p><span className="font-medium">WA:</span> {invoice.participant_phone}</p>
           <p><span className="font-medium">Paket:</span> {invoice.package_name}</p>
           <p><span className="font-medium">Jumlah:</span> Rp {invoice.amount.toLocaleString('id-ID')}</p>
-          <p><span className="font-medium">Jatuh Tempo:</span> {new Date(invoice.due_date).toLocaleDateString('id-ID')}</p>
+          <p><span className="font-medium">Jatuh Tempo:</span> {formatDate(invoice.due_date)}</p>
           <p><span className="font-medium">Status:</span> {invoice.status}</p>
           {invoice.confirmed_at && (
             <p><span className="font-medium">Dikonfirmasi:</span> {new Date(invoice.confirmed_at).toLocaleDateString('id-ID')}</p>

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { MapPin, Clock, ChevronDown, ChevronUp, Calendar } from 'lucide-react'
 import { portalApi } from '../../utils/api'
+import { formatDate, formatDateLong, WITH_WEEKDAY } from '../../utils/date'
 import type { ItineraryDay } from '../../types'
 
 interface ItineraryResponse {
@@ -51,9 +52,7 @@ export default function PortalItineraryPage() {
           {data.departure_date && (
             <span className="flex items-center gap-1">
               <Calendar size={13} />
-              {new Date(data.departure_date).toLocaleDateString('id-ID', {
-                day: 'numeric', month: 'long', year: 'numeric',
-              })}
+              {formatDateLong(data.departure_date)}
             </span>
           )}
         </div>
@@ -65,17 +64,13 @@ export default function PortalItineraryPage() {
           <p className="text-sm font-medium text-emerald-700">
             ✈️ Keberangkatan:{' '}
             <strong>
-              {new Date(data.departure_date).toLocaleDateString('id-ID', {
-                weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-              })}
+              {formatDate(data.departure_date, WITH_WEEKDAY)}
             </strong>
           </p>
           {data.return_date && (
             <p className="text-sm text-emerald-600 mt-0.5">
               🏠 Kepulangan:{' '}
-              {new Date(data.return_date).toLocaleDateString('id-ID', {
-                weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-              })}
+              {formatDate(data.return_date, WITH_WEEKDAY)}
             </p>
           )}
         </div>

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -13,10 +12,12 @@ import (
 	invoicesvc "github.com/irfan-ghzl/pintour-travel/internal/application/invoice"
 	pkgsvc "github.com/irfan-ghzl/pintour-travel/internal/application/package"
 	participantsvc "github.com/irfan-ghzl/pintour-travel/internal/application/participant"
+	"github.com/irfan-ghzl/pintour-travel/internal/config"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/document"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/invoice"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
 	domainUser "github.com/irfan-ghzl/pintour-travel/internal/domain/user"
+	"github.com/irfan-ghzl/pintour-travel/internal/format"
 	"github.com/irfan-ghzl/pintour-travel/internal/safe"
 	"github.com/irfan-ghzl/pintour-travel/internal/service"
 )
@@ -77,13 +78,6 @@ func (h *PortalHandler) notifyAdmins(ctx context.Context, send func(adminEmail s
 	}
 }
 
-func portalAppURL() string {
-	if v := os.Getenv("APP_URL"); v != "" {
-		return v
-	}
-	return "http://localhost:5173"
-}
-
 // PortalLogin godoc
 // @Summary      Login peserta ke portal (FR-PORTAL-01)
 // @Tags         portal
@@ -133,8 +127,8 @@ func (h *PortalHandler) PortalMe(c echo.Context) error {
 		return notFound(c, "peserta tidak ditemukan")
 	}
 	var countdown *int
-	if p.BatchDepartureDate != nil {
-		days := int(time.Until(*p.BatchDepartureDate).Hours() / 24)
+	if p.HasDeparture() {
+		days := p.DaysUntilDeparture() // §14.4 Participant.DaysUntilDeparture
 		countdown = &days
 	}
 	resp := map[string]interface{}{
@@ -376,10 +370,10 @@ func (h *PortalHandler) PortalUploadProof(c echo.Context) error {
 		if err != nil {
 			return
 		}
-		verifyLink := portalAppURL() + "/admin/invoices"
+		verifyLink := config.AppURL() + "/admin/invoices"
 		h.notifyAdmins(bg, func(adminEmail string) {
 			_ = h.email.SendEmailAdminPaymentProof(bg, adminEmail, p.Name,
-				rupiahFmt(amount), verifyLink)
+				format.Rupiah(amount), verifyLink)
 		})
 	})
 	return c.JSON(http.StatusCreated, ok(pp))
@@ -449,7 +443,7 @@ func (h *PortalHandler) PortalUploadDocument(c echo.Context) error {
 		if err != nil {
 			return
 		}
-		reviewLink := portalAppURL() + "/admin/documents"
+		reviewLink := config.AppURL() + "/admin/documents"
 		h.notifyAdmins(bg, func(adminEmail string) {
 			_ = h.email.SendEmailAdminDocUploaded(bg, adminEmail, p.Name, docType, reviewLink)
 		})
@@ -795,11 +789,19 @@ func PortalJWTMiddleware(secret string) echo.MiddlewareFunc {
 	}
 }
 
+// briefingWindowDays is how close to departure the briefing materials open
+// (§5.8): H-14.
+const briefingWindowDays = 14
+
+// isBriefingActive reports whether the briefing is open to this participant.
+//
+// The comparison is on whole days, and inclusive, which is what §5.8's "H-14"
+// says and what the portal already tells the participant: the countdown page
+// stops showing "available in N days" once the count reaches fourteen. The
+// previous form compared hours, so a participant whose countdown read 14 was
+// shown an open briefing and given a closed one.
 func isBriefingActive(p *participant.Participant) bool {
-	if p.BatchDepartureDate == nil {
-		return false
-	}
-	return time.Until(*p.BatchDepartureDate).Hours() <= 14*24
+	return p.HasDeparture() && p.DaysUntilDeparture() <= briefingWindowDays
 }
 
 // destinationToCountryCode delegates to service.DestinationToCountryCode (shared

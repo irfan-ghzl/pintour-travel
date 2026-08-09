@@ -6,6 +6,9 @@ import (
 	"time"
 
 	"github.com/jung-kurt/gofpdf"
+
+	"github.com/irfan-ghzl/pintour-travel/internal/domain/calendar"
+	"github.com/irfan-ghzl/pintour-travel/internal/format"
 )
 
 // PDFService generates PDF documents.
@@ -13,26 +16,60 @@ type PDFService struct{}
 
 func NewPDFService() *PDFService { return &PDFService{} }
 
+// doc is a gofpdf document that translates text on the way in.
+//
+// The core fonts these documents use (Helvetica and friends) are not Unicode:
+// they take cp1252, so a Go string containing "·", "•", "©" or an em dash
+// reaches the page as two or three replacement glyphs. Every one of those
+// appears in these templates — the briefing's bullet lists, the invoice's
+// footer, the airport report's "—" for a step nobody has done yet — and every
+// one of them was printing as mojibake.
+//
+// Wrapping the writer rather than sprinkling tr() over sixty call sites means
+// the next line of text added here is translated because it is written, not
+// because someone remembered. The report module already did this correctly and
+// is the pattern being followed.
+type doc struct {
+	*gofpdf.Fpdf
+	tr func(string) string
+}
+
+func newDoc(orientation string, marginLeft, marginTop, marginRight float64) *doc {
+	f := gofpdf.New(orientation, "mm", "A4", "")
+	f.SetMargins(marginLeft, marginTop, marginRight)
+	d := &doc{Fpdf: f, tr: f.UnicodeTranslatorFromDescriptor("")}
+	f.AddPage()
+	return d
+}
+
+func (d *doc) Cell(w, h float64, txt string) { d.Fpdf.Cell(w, h, d.tr(txt)) }
+
+func (d *doc) CellFormat(w, h float64, txt, border string, ln int, align string, fill bool, link int, linkStr string) {
+	d.Fpdf.CellFormat(w, h, d.tr(txt), border, ln, align, fill, link, linkStr)
+}
+
+func (d *doc) MultiCell(w, h float64, txt, border, align string, fill bool) {
+	d.Fpdf.MultiCell(w, h, d.tr(txt), border, align, fill)
+}
+
 // InvoiceData holds all data needed to render an invoice PDF.
 type InvoiceData struct {
-	InvoiceNumber   string
-	IssuedAt        time.Time
-	DueDate         time.Time
-	ParticipantName string
+	InvoiceNumber    string
+	IssuedAt         time.Time
+	DueDate          calendar.Date
+	ParticipantName  string
 	ParticipantPhone string
-	PackageName     string
-	BatchDate       string
-	RoomType        string
-	Amount          float64
-	Notes           string
-	IssuedByName    string
+	PackageName      string
+	BatchDate        string
+	RoomType         string
+	Amount           float64
+	Notes            string
+	IssuedByName     string
 }
 
 // GenerateInvoice creates an invoice PDF and returns the bytes.
 func (s *PDFService) GenerateInvoice(d InvoiceData) ([]byte, error) {
-	pdf := gofpdf.New("P", "mm", "A4", "")
-	pdf.SetMargins(20, 20, 20)
-	pdf.AddPage()
+	pdf := newDoc("P", 20, 20, 20)
 
 	// Header
 	pdf.SetFillColor(16, 100, 59) // emerald-700
@@ -97,7 +134,7 @@ func (s *PDFService) GenerateInvoice(d InvoiceData) ([]byte, error) {
 	items := []struct{ desc, val string }{
 		{"Paket Wisata", d.PackageName},
 		{"Tanggal Keberangkatan", d.BatchDate},
-		{"Tipe Kamar", titelize(d.RoomType)},
+		{"Tipe Kamar", format.Title(d.RoomType)},
 	}
 
 	pdf.SetFont("Helvetica", "", 9)
@@ -120,7 +157,7 @@ func (s *PDFService) GenerateInvoice(d InvoiceData) ([]byte, error) {
 	pdf.SetTextColor(255, 255, 255)
 	pdf.SetFont("Helvetica", "B", 11)
 	pdf.CellFormat(110, 10, "TOTAL TAGIHAN", "0", 0, "R", true, 0, "")
-	pdf.CellFormat(80, 10, fmt.Sprintf("Rp %s", formatRupiah(d.Amount)), "0", 1, "R", true, 0, "")
+	pdf.CellFormat(80, 10, fmt.Sprintf("Rp %s", format.Rupiah(d.Amount)), "0", 1, "R", true, 0, "")
 	pdf.SetTextColor(30, 30, 30)
 	pdf.Ln(8)
 
@@ -175,9 +212,7 @@ type BriefingData struct {
 
 // GenerateBriefing creates a briefing PDF.
 func (s *PDFService) GenerateBriefing(d BriefingData) ([]byte, error) {
-	pdf := gofpdf.New("P", "mm", "A4", "")
-	pdf.SetMargins(20, 20, 20)
-	pdf.AddPage()
+	pdf := newDoc("P", 20, 20, 20)
 
 	// Header
 	pdf.SetFillColor(16, 100, 59)
@@ -256,9 +291,7 @@ type AirportRow struct {
 
 // GenerateAirportReport creates post-handling report PDF (FR-AIR-06).
 func (s *PDFService) GenerateAirportReport(d AirportReportData) ([]byte, error) {
-	pdf := gofpdf.New("P", "mm", "A4", "")
-	pdf.SetMargins(15, 15, 15)
-	pdf.AddPage()
+	pdf := newDoc("P", 15, 15, 15)
 
 	// Header
 	pdf.SetFillColor(16, 100, 59)
@@ -347,24 +380,4 @@ func (s *PDFService) GenerateAirportReport(d AirportReportData) ([]byte, error) 
 		return nil, fmt.Errorf("generate airport report PDF: %w", err)
 	}
 	return buf.Bytes(), nil
-}
-
-func formatRupiah(amount float64) string {
-	s := fmt.Sprintf("%.0f", amount)
-	n := len(s)
-	result := make([]byte, 0, n+n/3)
-	for i, c := range s {
-		if i > 0 && (n-i)%3 == 0 {
-			result = append(result, '.')
-		}
-		result = append(result, byte(c))
-	}
-	return string(result)
-}
-
-func titelize(s string) string {
-	if len(s) == 0 {
-		return s
-	}
-	return string(s[0]-32) + s[1:]
 }

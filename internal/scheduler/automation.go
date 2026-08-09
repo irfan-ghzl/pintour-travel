@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"time"
 
+	"github.com/irfan-ghzl/pintour-travel/internal/config"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/notification"
+	domainPkg "github.com/irfan-ghzl/pintour-travel/internal/domain/package"
 	domainUser "github.com/irfan-ghzl/pintour-travel/internal/domain/user"
+	"github.com/irfan-ghzl/pintour-travel/internal/format"
 	"github.com/irfan-ghzl/pintour-travel/internal/service"
 )
 
@@ -148,7 +150,7 @@ func (s *Scheduler) expireInvoices() {
 		return
 	}
 
-	adminContact := envOr("ADMIN_CONTACT", "Tim Pintour")
+	adminContact := config.Env("ADMIN_CONTACT", "Tim Pintour")
 	digest := make([]service.OverdueInvoiceRow, 0, len(list))
 	for _, o := range list {
 		if o.phone != "" {
@@ -169,13 +171,13 @@ func (s *Scheduler) expireInvoices() {
 		digest = append(digest, service.OverdueInvoiceRow{
 			ParticipantName: o.name,
 			InvoiceNumber:   o.number,
-			Amount:          rupiah(o.amount),
+			Amount:          format.Rupiah(o.amount),
 		})
 	}
 
 	// One digest email to all admins.
 	if s.email != nil {
-		actionLink := envOr("APP_URL", "http://localhost:5173") + "/admin/invoices"
+		actionLink := config.AppURL() + "/admin/invoices"
 		for _, a := range s.getAdmins(ctx) {
 			if a.Email == "" {
 				continue
@@ -185,6 +187,10 @@ func (s *Scheduler) expireInvoices() {
 	}
 	log.Printf("expireInvoices: %d invoice overdue diproses", len(list))
 }
+
+// quotaWarningPercent is how little of a batch has to be left before the admins
+// hear about it (§2.4).
+const quotaWarningPercent = 20
 
 // checkBatchQuota (§2.4, daily 08:00): warn admins when an open batch is ≤20%
 // seats remaining. Deduped per batch per day via a QUOTA_WARNING marker row.
@@ -205,16 +211,17 @@ func (s *Scheduler) checkBatchQuota() {
 		log.Printf("checkBatchQuota query: %v", err)
 		return
 	}
+	// The batch is the domain entity so the seat arithmetic is the entity's
+	// (§14.4), plus the two joined columns the warning email needs.
 	type batch struct {
-		id, name  string
-		departure time.Time
-		quota     int
-		sold      int
+		domainPkg.PackageBatch
+		name string
+		sold int
 	}
 	var list []batch
 	for rows.Next() {
 		var b batch
-		if err := rows.Scan(&b.id, &b.name, &b.departure, &b.quota, &b.sold); err != nil {
+		if err := rows.Scan(&b.ID, &b.name, &b.DepartureDate, &b.Quota, &b.sold); err != nil {
 			continue
 		}
 		list = append(list, b)
@@ -223,11 +230,15 @@ func (s *Scheduler) checkBatchQuota() {
 
 	admins := s.getAdmins(ctx)
 	for _, b := range list {
-		if b.quota <= 0 {
+		if b.Quota <= 0 {
 			continue
 		}
-		remaining := b.quota - b.sold
-		if float64(remaining)/float64(b.quota)*100 > 20 {
+		// §14.4 PackageBatch.SeatsRemaining — the batch says how many are left,
+		// the job only decides that ≤20% is worth an email. A batch that oversold
+		// reports zero seats rather than a negative count, so the warning reads
+		// "sisa 0/20" instead of "sisa -2/20".
+		remaining := b.SeatsRemaining(b.sold)
+		if float64(remaining)/float64(b.Quota)*100 > quotaWarningPercent {
 			continue
 		}
 		// Dedupe per batch per day.
@@ -235,24 +246,24 @@ func (s *Scheduler) checkBatchQuota() {
 		_ = s.db.QueryRowContext(ctx, `
 			SELECT EXISTS(SELECT 1 FROM wa_notifications
 			WHERE reference_id=$1 AND message_type='QUOTA_WARNING'
-			AND created_at::date = CURRENT_DATE)`, b.id).Scan(&exists)
+			AND created_at::date = CURRENT_DATE)`, b.ID).Scan(&exists)
 		if exists {
 			continue
 		}
 
-		depDate := b.departure.Format("02 Jan 2006")
+		depDate := b.DepartureDate.Format("02 Jan 2006")
 		for _, a := range admins {
 			if a.Email == "" {
 				continue
 			}
-			_ = s.email.SendEmailAdminQuotaWarning(ctx, a.Email, b.name, depDate, remaining, b.quota)
+			_ = s.email.SendEmailAdminQuotaWarning(ctx, a.Email, b.name, depDate, remaining, b.Quota)
 		}
 		_, _ = s.db.ExecContext(ctx, `
 			INSERT INTO wa_notifications
 			(id,recipient_phone,recipient_name,message_type,message_content,reference_id,reference_type,status,created_at)
 			VALUES (gen_random_uuid(),'-','admin','QUOTA_WARNING',$1,$2,'batch','sent',NOW())`,
-			fmt.Sprintf("Quota warning %s: sisa %d/%d", b.name, remaining, b.quota), b.id)
-		log.Printf("checkBatchQuota: warning terkirim untuk batch %s (sisa %d/%d)", b.name, remaining, b.quota)
+			fmt.Sprintf("Quota warning %s: sisa %d/%d", b.name, remaining, b.Quota), b.ID)
+		log.Printf("checkBatchQuota: warning terkirim untuk batch %s (sisa %d/%d)", b.name, remaining, b.Quota)
 	}
 }
 
@@ -298,25 +309,4 @@ func (s *Scheduler) markNotified(ctx context.Context, referenceID, messageType, 
 // getAdmins returns the users who receive admin notifications (§17.2.2).
 func (s *Scheduler) getAdmins(ctx context.Context) []domainUser.User {
 	return domainUser.ListAdmins(ctx, s.users)
-}
-
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
-// rupiah formats a float as a thousands-separated string (no symbol).
-func rupiah(amount float64) string {
-	s := fmt.Sprintf("%.0f", amount)
-	n := len(s)
-	out := make([]byte, 0, n+n/3)
-	for i := 0; i < n; i++ {
-		if i > 0 && (n-i)%3 == 0 {
-			out = append(out, '.')
-		}
-		out = append(out, s[i])
-	}
-	return string(out)
 }

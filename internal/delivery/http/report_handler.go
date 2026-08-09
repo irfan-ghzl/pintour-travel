@@ -10,6 +10,8 @@ import (
 	"github.com/jung-kurt/gofpdf"
 	"github.com/labstack/echo/v4"
 	"github.com/xuri/excelize/v2"
+
+	"github.com/irfan-ghzl/pintour-travel/internal/format"
 )
 
 // ReportHandler exports admin reports as Excel or PDF (prompt §4.1 / §4.2).
@@ -41,9 +43,9 @@ func (h *ReportHandler) Export(c echo.Context) error {
 		return serverErr(c, sql.ErrConnDone)
 	}
 	typ := c.QueryParam("type")
-	format := c.QueryParam("format")
-	if format == "" {
-		format = "excel"
+	fileFormat := c.QueryParam("format")
+	if fileFormat == "" {
+		fileFormat = "excel"
 	}
 
 	data, err := h.resolve(c.Request().Context(), typ)
@@ -55,7 +57,7 @@ func (h *ReportHandler) Export(c echo.Context) error {
 	}
 
 	filename := fmt.Sprintf("pintour-%s-%s", typ, time.Now().Format("20060102"))
-	switch format {
+	switch fileFormat {
 	case "pdf":
 		return h.writePDF(c, data, filename+".pdf")
 	default:
@@ -160,8 +162,8 @@ func (h *ReportHandler) queryRows(ctx context.Context, rd *reportData, query str
 			if err := rows.Scan(&num, &name, &pkg, &amount, &paid, &status, &due); err != nil {
 				return nil, err
 			}
-			rd.rows = append(rd.rows, []string{num, name, pkg, "Rp " + rupiahFmt(amount),
-				"Rp " + rupiahFmt(paid), "Rp " + rupiahFmt(amount-paid), status, due})
+			rd.rows = append(rd.rows, []string{num, name, pkg, "Rp " + format.Rupiah(amount),
+				"Rp " + format.Rupiah(paid), "Rp " + format.Rupiah(amount-paid), status, due})
 		case "Batch Keberangkatan":
 			var pkg, tl, dep, status string
 			var quota, sold int
@@ -268,7 +270,7 @@ func (h *ReportHandler) writePDF(c echo.Context, d *reportData, filename string)
 			pdf.SetFillColor(255, 255, 255)
 		}
 		for _, val := range row {
-			pdf.CellFormat(colW, 6, tr(truncate(val, 40)), "1", 0, "L", true, 0, "")
+			pdf.CellFormat(colW, 6, tr(format.Ellipsis(val, 40)), "1", 0, "L", true, 0, "")
 		}
 		pdf.Ln(-1)
 		fill = !fill
@@ -278,25 +280,4 @@ func (h *ReportHandler) writePDF(c echo.Context, d *reportData, filename string)
 	c.Response().Header().Set("Content-Disposition", "attachment; filename="+filename)
 	c.Response().WriteHeader(http.StatusOK)
 	return pdf.Output(c.Response().Writer)
-}
-
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max-1] + "…"
-}
-
-// rupiahFmt formats a float as a thousands-separated string (no symbol).
-func rupiahFmt(amount float64) string {
-	s := fmt.Sprintf("%.0f", amount)
-	n := len(s)
-	out := make([]byte, 0, n+n/3)
-	for i := 0; i < n; i++ {
-		if i > 0 && (n-i)%3 == 0 {
-			out = append(out, '.')
-		}
-		out = append(out, s[i])
-	}
-	return string(out)
 }

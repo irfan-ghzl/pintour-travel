@@ -14,12 +14,13 @@ export default function PortalLoginPage() {
     mutationFn: (req: PortalLoginRequest) =>
       axios.post<{ success: boolean; data: PortalLoginResponse }>('/api/v1/portal/login', req)
         .then(r => r.data.data),
-    onSuccess: (data) => {
+    onSuccess: (data, vars) => {
       localStorage.setItem('portal_token', data.token)
       localStorage.setItem('portal_participant', JSON.stringify({
         id: data.participant_id,
         name: data.name,
         package_name: data.package_name,
+        phone: vars.phone, // v2.0 F3 — for prefilling the next-tour consultation form
       }))
       navigate('/portal')
     },

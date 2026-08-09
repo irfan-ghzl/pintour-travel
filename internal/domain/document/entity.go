@@ -2,7 +2,22 @@ package document
 
 import (
 	"encoding/json"
+	"errors"
+	"strings"
 	"time"
+)
+
+// ErrRejectionReasonRequired is returned when a document is rejected without
+// saying why. The participant has to re-upload; a rejection with no reason
+// tells them nothing about what to fix.
+var ErrRejectionReasonRequired = errors.New("alasan penolakan harus diisi")
+
+// Document review outcomes. Keep in sync with the documents_status_check
+// constraint in db/migrations/003_prd_schema.sql.
+const (
+	StatusPending  = "menunggu"
+	StatusApproved = "disetujui"
+	StatusRejected = "ditolak"
 )
 
 // Types lists every document kind a participant may upload. Keep in sync with
@@ -28,6 +43,44 @@ type Document struct {
 	ReviewedAt      *time.Time `json:"reviewed_at,omitempty"`
 	// Joined
 	ParticipantName string `json:"participant_name,omitempty"`
+}
+
+// Approve records reviewerID accepting the document at time at (§14.4).
+//
+// A document approved after an earlier rejection loses that rejection's reason:
+// it no longer applies, and leaving it behind is how a participant ends up
+// looking at an approved document that still says what was wrong with it.
+func (d *Document) Approve(reviewerID string, at time.Time) error {
+	if d == nil {
+		return errors.New("dokumen tidak boleh kosong")
+	}
+	if reviewerID == "" {
+		return errors.New("peninjau harus diisi")
+	}
+	d.Status = StatusApproved
+	d.RejectionReason = ""
+	d.ReviewedBy = &reviewerID
+	d.ReviewedAt = &at
+	return nil
+}
+
+// Reject records reviewerID refusing the document at time at, with the reason
+// the participant is shown (§14.4).
+func (d *Document) Reject(reviewerID, reason string, at time.Time) error {
+	if d == nil {
+		return errors.New("dokumen tidak boleh kosong")
+	}
+	if reviewerID == "" {
+		return errors.New("peninjau harus diisi")
+	}
+	if strings.TrimSpace(reason) == "" {
+		return ErrRejectionReasonRequired
+	}
+	d.Status = StatusRejected
+	d.RejectionReason = reason
+	d.ReviewedBy = &reviewerID
+	d.ReviewedAt = &at
+	return nil
 }
 
 // CountryRequirement defines documents needed for a destination country.

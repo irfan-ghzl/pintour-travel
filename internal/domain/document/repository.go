@@ -7,9 +7,6 @@ type Repository interface {
 	GetByID(ctx context.Context, id string) (*Document, error)
 	// List returns one page of documents and the total matching the filter.
 	List(ctx context.Context, f Filter) ([]Document, int, error)
-	// CountByStatus returns how many documents are in a status, without
-	// reading them — what a dashboard tile actually needs.
-	CountByStatus(ctx context.Context, status string) (int, error)
 	ListByParticipant(ctx context.Context, participantID string) ([]Document, error)
 	Review(ctx context.Context, id, status, reviewedBy, rejectionReason string) error
 	Delete(ctx context.Context, id string) error

@@ -1,5 +1,7 @@
 import axios from 'axios'
 
+import { saveBlob } from './download'
+
 // Admin/staff API — authentication is carried solely by the httpOnly session
 // cookie (PRD §19.1). The JWT is never read from JavaScript, so there is no
 // Authorization header to attach here — that is what keeps it safe from XSS.
@@ -74,12 +76,7 @@ export const downloadTripInvoice = async (participantId: string) => {
   const res = await portalApi.get(`/portal/my-trips/${participantId}/invoice-pdf`, {
     responseType: 'blob',
   })
-  const href = URL.createObjectURL(res.data as Blob)
-  const a = document.createElement('a')
-  a.href = href
-  a.download = `invoice-${participantId.slice(0, 8)}.pdf`
-  a.click()
-  URL.revokeObjectURL(href)
+  saveBlob(res.data as Blob, `invoice-${participantId.slice(0, 8)}.pdf`)
 }
 
 // ── OCR (v2.0 F6 — self-hosted Tesseract) ─────────────────────────────────────
@@ -242,11 +239,5 @@ export const exportReport = async (type: ReportType, format: ReportFormat) => {
   })
   const ext = format === 'excel' ? 'xlsx' : 'pdf'
   const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '')
-  const filename = `pintour-${type}-${stamp}.${ext}`
-  const href = URL.createObjectURL(res.data as Blob)
-  const a = document.createElement('a')
-  a.href = href
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(href)
+  saveBlob(res.data as Blob, `pintour-${type}-${stamp}.${ext}`)
 }

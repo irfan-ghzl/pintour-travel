@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Search, UserPlus } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../../utils/api'
-import type { Participant, PaginatedResponse, ConvertLeadRequest } from '../../types'
+import type { Participant, PaginatedResponse, ConvertLeadRequest, Lead } from '../../types'
 
 export default function AdminParticipantsPage() {
   const [search, setSearch] = useState('')
@@ -24,12 +24,29 @@ export default function AdminParticipantsPage() {
     queryFn: () => api.get<PaginatedResponse<Participant>>(`/admin/participants?${params}`).then(r => r.data),
   })
 
+  // v2.0 F4 — peek at the lead being converted to warn before submit when the
+  // customer already has a portal account (returning customer).
+  const leadId = convertForm.lead_id.trim()
+  const { data: convertLead } = useQuery({
+    queryKey: ['convert-lead-peek', leadId],
+    queryFn: () =>
+      api.get<{ success: boolean; data: { lead: Lead; previous_trips: Participant[] | null } }>(`/admin/leads/${leadId}`)
+        .then(r => r.data.data),
+    enabled: showConvert && leadId.length >= 30,
+    retry: false,
+  })
+
   const convertMutation = useMutation({
     mutationFn: (req: ConvertLeadRequest) =>
       api.post('/admin/participants/convert', req).then(r => r.data),
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ['participants'] })
-      toast.success(`Peserta berhasil dibuat! Password sementara: ${res.data?.temp_password}`)
+      // v2.0 F1 — returning customer reuses the existing portal account (no new password).
+      if (res.data?.reused_account) {
+        toast.success('Peserta lama terdeteksi — akun portal lama digunakan, password tidak berubah.', { duration: 6000 })
+      } else {
+        toast.success(`Peserta berhasil dibuat! Password sementara: ${res.data?.temp_password}`, { duration: 6000 })
+      }
       setShowConvert(false)
     },
     onError: (e: any) => toast.error(e.response?.data?.message ?? 'Konversi gagal'),
@@ -139,6 +156,21 @@ export default function AdminParticipantsPage() {
               <h3 className="font-semibold text-gray-800">Konversi Leads ke Peserta</h3>
               <button onClick={() => setShowConvert(false)} className="text-gray-400">✕</button>
             </div>
+            {/* v2.0 F4 — peringatan returning customer sebelum submit */}
+            {convertLead?.lead?.is_returning && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5 text-xs text-amber-800">
+                <p className="font-semibold mb-0.5">⚠️ Pelanggan Lama Terdeteksi</p>
+                <p>
+                  Nomor <span className="font-medium">{convertLead.lead.phone}</span> sudah memiliki akun portal.
+                  Akun lama akan digunakan — password <span className="font-medium">tidak berubah</span>, tidak perlu kirim password baru.
+                </p>
+                {convertLead.previous_trips && convertLead.previous_trips.length > 0 && (
+                  <p className="mt-1 text-amber-700">
+                    {convertLead.previous_trips.length} tour sebelumnya: {convertLead.previous_trips.map(t => t.package_name).join(', ')}
+                  </p>
+                )}
+              </div>
+            )}
             <div className="space-y-3">
               <div>
                 <label className="text-xs font-medium text-gray-600 block mb-1">Lead ID (paste dari daftar leads)</label>

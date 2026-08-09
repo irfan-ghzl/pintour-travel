@@ -3,23 +3,10 @@ import { Clock, FileText, BookOpen, CheckCircle, AlertCircle, Receipt, Shield, C
 import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { portalApi, getMyTrips, downloadTripInvoice, getTripItinerary } from '../../utils/api'
+// The itinerary is structured data rather than a rendered document, so the
+// archive hands it over as-is instead of inventing a layout for it here.
+import { saveJSON } from '../../utils/download'
 import type { PortalMeResponse, Invoice, Document } from '../../types'
-
-// downloadJSON saves an object as a file. The itinerary is structured data
-// rather than a rendered document, so the archive hands it over as-is instead of
-// inventing a layout for it here.
-function downloadJSON(data: unknown, filename: string) {
-  const href = URL.createObjectURL(
-    new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }),
-  )
-  const a = document.createElement('a')
-  a.href = href
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  setTimeout(() => URL.revokeObjectURL(href), 0)
-}
 
 interface Task {
   id: string
@@ -372,7 +359,7 @@ export default function PortalDashboardPage() {
                   <button
                     onClick={() =>
                       getTripItinerary(t.participant_id)
-                        .then(it => downloadJSON(it, `itinerary-${t.participant_id.slice(0, 8)}.json`))
+                        .then(it => saveJSON(it, `itinerary-${t.participant_id.slice(0, 8)}.json`))
                         .catch(() => toast.error('Gagal mengunduh itinerary'))
                     }
                     className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-100"

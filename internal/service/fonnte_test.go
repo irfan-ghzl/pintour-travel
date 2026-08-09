@@ -74,7 +74,9 @@ func TestFonnteTemplateHelpers(t *testing.T) {
 		{"SendPaymentReminder", func() error { return svc.SendPaymentReminder(ctx, "628111", "A", "INV-1", "1 hari", "iid") }},
 		{"SendDocRequest", func() error { return svc.SendDocRequest(ctx, "628111", "A", "Pkg", "url", "pid") }},
 		{"SendDocRejected", func() error { return svc.SendDocRejected(ctx, "628111", "A", "passport", "blur", "url", "pid") }},
-		{"SendDepartureReminder", func() error { return svc.SendDepartureReminder(ctx, "628111", "A", "Pkg", "01 Jan", "H-7", "REMINDER_H7", "pid") }},
+		{"SendDepartureReminder", func() error {
+			return svc.SendDepartureReminder(ctx, "628111", "A", "Pkg", "01 Jan", "H-7", "REMINDER_H7", "pid")
+		}},
 		{"SendPortalCredentials", func() error { return svc.SendPortalCredentials(ctx, "628111", "A", "rahasia1", "url", "pid") }},
 	}
 

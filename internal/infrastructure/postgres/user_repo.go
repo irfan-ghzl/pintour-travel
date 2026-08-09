@@ -13,10 +13,6 @@ func NewUserRepo(db *sql.DB) user.Repository { return &userRepo{db} }
 
 const userCols = `id,name,email,password,role,COALESCE(phone,''),is_active,created_at,updated_at`
 
-func scanUser(s interface{ Scan(...interface{}) error }, u *user.User) error {
-	return s.Scan(&u.ID, &u.Name, &u.Email, &u.Password, &u.Role, &u.Phone, &u.IsActive, &u.CreatedAt, &u.UpdatedAt)
-}
-
 func (r *userRepo) GetByEmail(ctx context.Context, email string) (*user.User, error) {
 	var u user.User
 	err := r.db.QueryRowContext(ctx,
@@ -82,14 +78,6 @@ func (r *userRepo) ListKonsultan(ctx context.Context) ([]user.User, error) {
 	}
 	defer rows.Close()
 	return scanUsers(rows)
-}
-
-func (r *userRepo) CountActiveleadsByConsultant(ctx context.Context, consultantID string) (int, error) {
-	var n int
-	err := r.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM leads WHERE assigned_to=$1 AND status NOT IN ('tidak_deal','peserta')`,
-		consultantID).Scan(&n)
-	return n, err
 }
 
 func scanUsers(rows *sql.Rows) ([]user.User, error) {

@@ -4,10 +4,11 @@ import (
 	"context"
 	"log"
 	"net/http"
-	"os"
+	"time"
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/irfan-ghzl/pintour-travel/internal/config"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/airport"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/document"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
@@ -110,7 +111,12 @@ func (h *DocumentHandler) reviewSummary(ctx context.Context, participantID strin
 	if err != nil {
 		return nil, err
 	}
-	summary := map[string]int{"total": len(all), "disetujui": 0, "menunggu": 0, "ditolak": 0}
+	summary := map[string]int{
+		"total":                 len(all),
+		document.StatusApproved: 0,
+		document.StatusPending:  0,
+		document.StatusRejected: 0,
+	}
 	for _, d := range all {
 		summary[d.Status]++
 	}
@@ -165,12 +171,21 @@ func (h *DocumentHandler) ReviewDocument(c echo.Context) error {
 		return invalidPayload(c, err, "status harus 'disetujui' atau 'ditolak'")
 	}
 	docID := c.Param("id")
-	if err := h.docs.Review(c.Request().Context(), docID, body.Status, claimUserID(c), body.RejectionReason); err != nil {
+	// The outcome is applied to the document itself (§14.4 Document.Approve /
+	// Document.Reject) and the repository persists what that produced, so the
+	// rules — a rejection says why, an approval drops the previous reason — live
+	// in one place instead of being restated by every caller that reviews.
+	reviewed := document.Document{ID: docID}
+	if err := applyReview(&reviewed, body.Status, claimUserID(c), body.RejectionReason); err != nil {
+		return badRequest(c, err.Error())
+	}
+	if err := h.docs.Review(c.Request().Context(), docID,
+		reviewed.Status, *reviewed.ReviewedBy, reviewed.RejectionReason); err != nil {
 		return serverErr(c, err)
 	}
 
 	// Async: send DOC_REJECTED WA when document is rejected
-	if body.Status == "ditolak" && h.fonnte != nil && h.participants != nil {
+	if body.Status == document.StatusRejected && h.fonnte != nil && h.participants != nil {
 		reason := body.RejectionReason
 		safe.Go("notifikasi dokumen ditolak", func() {
 			bgCtx := context.Background()
@@ -184,10 +199,7 @@ func (h *DocumentHandler) ReviewDocument(c echo.Context) error {
 			if err != nil {
 				return
 			}
-			portalBase := os.Getenv("PORTAL_BASE_URL")
-			if portalBase == "" {
-				portalBase = "http://localhost:3000"
-			}
+			portalBase := config.PortalBaseURL()
 			_ = h.fonnte.SendDocRejected(bgCtx, p.Phone, p.Name,
 				doc.DocumentType, reason, portalBase+"/portal/documents", p.ID)
 			if h.email != nil && p.Email != "" {
@@ -200,13 +212,23 @@ func (h *DocumentHandler) ReviewDocument(c echo.Context) error {
 	// §1.5/§1.6: when a document is approved, check whether the participant has
 	// all documents approved (notify DOC_APPROVED) and whether the whole batch is
 	// ready (auto-generate the airport checklist).
-	if body.Status == "disetujui" {
+	if body.Status == document.StatusApproved {
 		safe.Go("otomasi setelah dokumen disetujui", func() {
 			h.onDocumentApproved(context.Background(), docID)
 		})
 	}
 
 	return c.JSON(http.StatusOK, ok(map[string]string{"message": "Dokumen berhasil direview"}))
+}
+
+// applyReview records the reviewer's decision on d. The status has already been
+// checked against the schema's vocabulary by the validate tag; this maps it to
+// the entity method that owns what the decision means.
+func applyReview(d *document.Document, status, reviewerID, reason string) error {
+	if status == document.StatusApproved {
+		return d.Approve(reviewerID, time.Now())
+	}
+	return d.Reject(reviewerID, reason, time.Now())
 }
 
 // onDocumentApproved runs the post-approval automation (§1.5 + §1.6).
@@ -247,7 +269,7 @@ func (h *DocumentHandler) allDocsApproved(ctx context.Context, participantID str
 		return false
 	}
 	for _, d := range docs {
-		if d.Status != "disetujui" {
+		if d.Status != document.StatusApproved {
 			return false
 		}
 	}

@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/go-playground/validator/v10"
+	"github.com/irfan-ghzl/pintour-travel/internal/domain/calendar"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/document"
 	domainLead "github.com/irfan-ghzl/pintour-travel/internal/domain/lead"
 	domainParticipant "github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
@@ -52,6 +53,17 @@ func newPayloadValidator() *validator.Validate {
 	_ = v.RegisterValidation("phone_id", func(fl validator.FieldLevel) bool {
 		return isIndonesianPhone(fl.Field().String())
 	})
+
+	// calendar.Date carries its day in an unexported field, which the validator
+	// cannot see — so `required` on a date read it as present no matter what,
+	// and an empty date picker submitted a batch with no departure. Handing over
+	// the underlying instant makes `required` mean what it means everywhere else.
+	v.RegisterCustomTypeFunc(func(field reflect.Value) any {
+		if d, ok := field.Interface().(calendar.Date); ok {
+			return d.Time()
+		}
+		return nil
+	}, calendar.Date{})
 
 	// One tag per vocabulary that already has a canonical list in the domain, so
 	// the list lives in exactly one place instead of being restated in every
@@ -158,6 +170,15 @@ func invalidPayload(c echo.Context, err error, fallback string) error {
 	var failure validationFailure
 	if errors.As(err, &failure) {
 		return badRequest(c, failure.Error())
+	}
+	// A date the API could not read says so, and quotes the value. The admin
+	// forms bind a date picker straight into the body, so a date the decoder
+	// refuses is the single most likely reason one of them fails — answering it
+	// with the handler's generic fallback left the admin with a form that never
+	// worked and no clue why.
+	var badDate calendar.ParseError
+	if errors.As(err, &badDate) {
+		return badRequest(c, badDate.Error())
 	}
 	return badRequest(c, fallback)
 }

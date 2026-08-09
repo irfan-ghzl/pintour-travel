@@ -47,20 +47,6 @@ func (r *invoiceRepo) GetByID(ctx context.Context, id string) (*invoice.Invoice,
 		WHERE i.id=$1 AND i.deleted_at IS NULL`, id)
 }
 
-func (r *invoiceRepo) GetByNumber(ctx context.Context, number string) (*invoice.Invoice, error) {
-	return r.scan(ctx, `
-		SELECT i.id,i.invoice_number,i.participant_id,i.batch_id,i.amount,i.due_date,i.status,
-		COALESCE(i.pdf_path,''),COALESCE(i.notes,''),i.issued_by,i.confirmed_by,i.confirmed_at,
-		i.created_at,i.updated_at,
-		p.name,p.phone,pkg.name,u.name
-		FROM invoices i
-		JOIN participants p ON p.id=i.participant_id
-		JOIN package_batches pb ON pb.id=i.batch_id
-		JOIN packages pkg ON pkg.id=pb.package_id
-		JOIN users u ON u.id=i.issued_by
-		WHERE i.invoice_number=$1 AND i.deleted_at IS NULL`, number)
-}
-
 func (r *invoiceRepo) scan(ctx context.Context, q string, arg interface{}) (*invoice.Invoice, error) {
 	var inv invoice.Invoice
 	err := r.db.QueryRowContext(ctx, q, arg).Scan(
@@ -147,21 +133,6 @@ func (r *invoiceRepo) List(ctx context.Context, f invoice.Filter) ([]invoice.Inv
 	return list, total, rows.Err()
 }
 
-// GetByOrderID looks up an invoice by its Midtrans order id (v2.0 F1).
-func (r *invoiceRepo) GetByOrderID(ctx context.Context, orderID string) (*invoice.Invoice, error) {
-	return r.scan(ctx, `
-		SELECT i.id,i.invoice_number,i.participant_id,i.batch_id,i.amount,i.due_date,i.status,
-		COALESCE(i.pdf_path,''),COALESCE(i.notes,''),i.issued_by,i.confirmed_by,i.confirmed_at,
-		i.created_at,i.updated_at,
-		p.name,p.phone,pkg.name,u.name
-		FROM invoices i
-		JOIN participants p ON p.id=i.participant_id
-		JOIN package_batches pb ON pb.id=i.batch_id
-		JOIN packages pkg ON pkg.id=pb.package_id
-		JOIN users u ON u.id=i.issued_by
-		WHERE i.midtrans_order_id=$1 AND i.deleted_at IS NULL`, orderID)
-}
-
 // SetSnap stores the Snap token + order id for an invoice (v2.0 F1).
 func (r *invoiceRepo) SetSnap(ctx context.Context, id, snapToken, orderID string) error {
 	_, err := r.db.ExecContext(ctx, `
@@ -193,40 +164,6 @@ func (r *invoiceRepo) NextSequence(ctx context.Context, yearMonth string) (int, 
 		return 0, err
 	}
 	return maxSeq + 1, nil
-}
-
-func (r *invoiceRepo) ListUnpaidOlderThan(ctx context.Context, days int) ([]invoice.Invoice, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT i.id,i.invoice_number,i.participant_id,i.batch_id,i.amount,i.due_date,i.status,
-		COALESCE(i.pdf_path,''),COALESCE(i.notes,''),i.issued_by,i.confirmed_by,i.confirmed_at,
-		i.created_at,i.updated_at,
-		p.name,p.phone,pkg.name,u.name
-		FROM invoices i
-		JOIN participants p ON p.id=i.participant_id
-		JOIN package_batches pb ON pb.id=i.batch_id
-		JOIN packages pkg ON pkg.id=pb.package_id
-		JOIN users u ON u.id=i.issued_by
-		WHERE i.deleted_at IS NULL AND i.status IN ('diterbitkan','menunggu_bayar')
-		AND i.created_at < NOW() - ($1 || ' days')::interval
-		ORDER BY i.created_at`, days)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var list []invoice.Invoice
-	for rows.Next() {
-		var inv invoice.Invoice
-		if err := rows.Scan(
-			&inv.ID, &inv.InvoiceNumber, &inv.ParticipantID, &inv.BatchID,
-			&inv.Amount, &inv.DueDate, &inv.Status, &inv.PDFPath, &inv.Notes,
-			&inv.IssuedBy, &inv.ConfirmedBy, &inv.ConfirmedAt,
-			&inv.CreatedAt, &inv.UpdatedAt,
-			&inv.ParticipantName, &inv.ParticipantPhone, &inv.PackageName, &inv.IssuedByName); err != nil {
-			return nil, err
-		}
-		list = append(list, inv)
-	}
-	return list, rows.Err()
 }
 
 // ─── PaymentProof ─────────────────────────────────────────────────────────────

@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/irfan-ghzl/pintour-travel/internal/domain/calendar"
 	domainInvoice "github.com/irfan-ghzl/pintour-travel/internal/domain/invoice"
 	domainParticipant "github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
 )
@@ -55,7 +56,7 @@ func seedPayable(h *harness) {
 		ID: "invoice-1", InvoiceNumber: "INV-202608-0001",
 		ParticipantID: "participant-1", BatchID: "batch-1",
 		Amount: 10000000, Status: "menunggu_bayar", IssuedBy: "user-admin",
-		DueDate: time.Now().Add(7 * 24 * time.Hour),
+		DueDate: calendar.Today().AddDays(7),
 	})
 	h.GatewayOrders.Seed(domainInvoice.GatewayOrder{
 		ID: "order-row-1", InvoiceID: "invoice-1",
@@ -215,7 +216,7 @@ func TestReviewProof_RefusesProofFromAnotherInvoice(t *testing.T) {
 		ID: "invoice-2", InvoiceNumber: "INV-202608-0002",
 		ParticipantID: "participant-1", BatchID: "batch-1",
 		Amount: 5000000, Status: "menunggu_bayar", IssuedBy: "user-admin",
-		DueDate: time.Now().Add(7 * 24 * time.Hour),
+		DueDate: calendar.Today().AddDays(7),
 	})
 	h.Proofs.Seed(domainInvoice.PaymentProof{
 		ID: "proof-untuk-invoice-2", InvoiceID: "invoice-2",

@@ -3,11 +3,20 @@ package lead
 import (
 	"errors"
 	"time"
+
+	"github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
 )
 
 // ErrInvalidStatus is returned when a status transition target is not one of the
 // allowed lead statuses (mirrors the leads_status_check DB constraint).
 var ErrInvalidStatus = errors.New("status lead tidak valid")
+
+// StatusDeal is the status a lead has to reach before it can become a
+// participant; StatusConverted is what it becomes afterwards.
+const (
+	StatusDeal      = "deal"
+	StatusConverted = "peserta"
+)
 
 // Statuses lists every valid lead status, in pipeline order. Keep in sync with
 // the leads_status_check constraint in db/migrations/003_prd_schema.sql.
@@ -50,6 +59,72 @@ type Lead struct {
 	// Joined
 	PackageName  string  `json:"package_name,omitempty"`
 	AssigneeName *string `json:"assignee_name,omitempty"`
+}
+
+// ChangeStatus moves the lead to newStatus, refusing anything the schema would
+// refuse (§14.4). The lead is left untouched when the target is rejected, so a
+// caller that ignores the error cannot end up writing a status it was denied.
+//
+// Recording who moved it is the repository's job: the trail row and the status
+// column are written together, in one transaction, and a domain method cannot
+// reach a transaction.
+func (l *Lead) ChangeStatus(newStatus string) error {
+	if !IsValidStatus(newStatus) {
+		return ErrInvalidStatus
+	}
+	l.Status = newStatus
+	return nil
+}
+
+// AssignTo hands the lead to a consultant (§14.4).
+func (l *Lead) AssignTo(consultantID string) error {
+	if consultantID == "" {
+		return errors.New("konsultan tujuan harus diisi")
+	}
+	l.AssignedTo = &consultantID
+	return nil
+}
+
+// ConvertToParticipant derives the participant this lead becomes (§14.4).
+//
+// It builds the record and nothing else: no portal account, no invoice, no
+// write. Those need a database and stay in the application layer, which is also
+// where the three of them are made to succeed or fail together.
+//
+// The room type is checked here rather than at the column because the write
+// that would fail sits in the middle of that unit, and "tipe kamar tidak
+// dikenal" is a better answer than a rolled-back conversion reporting a
+// constraint violation.
+func (l *Lead) ConvertToParticipant(batchID, roomType string) (*participant.Participant, error) {
+	if l == nil {
+		return nil, errors.New("lead tidak boleh kosong")
+	}
+	if l.Status != StatusDeal {
+		return nil, ErrNotConvertible
+	}
+	if batchID == "" {
+		return nil, errors.New("batch keberangkatan harus diisi")
+	}
+	if !participant.IsValidRoomType(roomType) {
+		return nil, participant.ErrInvalidRoomType
+	}
+	leadID := l.ID
+	p := &participant.Participant{
+		LeadID:   &leadID,
+		BatchID:  batchID,
+		Name:     l.Name,
+		Phone:    l.Phone,
+		Email:    l.Email,
+		RoomType: roomType,
+		// Not active yet: the portal opens when the invoice is settled, not when
+		// the lead is converted.
+		IsActive: false,
+	}
+	if l.PortalUserID != nil && *l.PortalUserID != "" {
+		portalUserID := *l.PortalUserID
+		p.PortalUserID = &portalUserID
+	}
+	return p, nil
 }
 
 // Note is a consultant note on a lead.

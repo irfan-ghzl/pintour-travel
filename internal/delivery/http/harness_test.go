@@ -74,6 +74,7 @@ import (
 	participantsvc "github.com/irfan-ghzl/pintour-travel/internal/application/participant"
 	usersvc "github.com/irfan-ghzl/pintour-travel/internal/application/user"
 	"github.com/irfan-ghzl/pintour-travel/internal/auth"
+	"github.com/irfan-ghzl/pintour-travel/internal/domain/calendar"
 	domainInvoice "github.com/irfan-ghzl/pintour-travel/internal/domain/invoice"
 	domainLead "github.com/irfan-ghzl/pintour-travel/internal/domain/lead"
 	domainPkg "github.com/irfan-ghzl/pintour-travel/internal/domain/package"
@@ -318,7 +319,7 @@ func (h *harness) seedBaseline() {
 	h.Invoices.Seed(domainInvoice.Invoice{
 		ID: "invoice-1", InvoiceNumber: "INV-202608-0001",
 		ParticipantID: "participant-1", BatchID: "batch-1",
-		Amount: 25000000, Status: "diterbitkan", DueDate: time.Now().Add(24 * time.Hour),
+		Amount: 25000000, Status: "diterbitkan", DueDate: calendar.Today().AddDays(1),
 	})
 }
 
@@ -455,7 +456,10 @@ func (c *client) do(method, path string, body any) *response {
 
 	rec := httptest.NewRecorder()
 	c.h.e.ServeHTTP(rec, req)
-	return &response{t: c.h.t, method: method, path: path, Code: rec.Code, Body: rec.Body.Bytes()}
+	return &response{
+		t: c.h.t, method: method, path: path,
+		Code: rec.Code, Body: rec.Body.Bytes(), Headers: rec.Header(),
+	}
 }
 
 // response is one served request's outcome.
@@ -465,6 +469,33 @@ type response struct {
 	path   string
 	Code   int
 	Body   []byte
+	// Headers is what the handler set on the way out — the content type of a
+	// download, and the Set-Cookie a session depends on.
+	Headers http.Header
+}
+
+// cookie returns the cookie the response set under name, or nil.
+func (r *response) cookie(name string) *http.Cookie {
+	r.t.Helper()
+	for _, raw := range r.Headers.Values("Set-Cookie") {
+		parsed, err := http.ParseSetCookie(raw)
+		if err == nil && parsed.Name == name {
+			return parsed
+		}
+	}
+	return nil
+}
+
+// expectPDF fails the test unless the body is a PDF served as one.
+func (r *response) expectPDF() *response {
+	r.t.Helper()
+	if got := r.Headers.Get("Content-Type"); got != "application/pdf" {
+		r.t.Errorf("%s %s: Content-Type = %q, want application/pdf", r.method, r.path, got)
+	}
+	if len(r.Body) < 5 || string(r.Body[:5]) != "%PDF-" {
+		r.t.Errorf("%s %s: badan respons bukan PDF", r.method, r.path)
+	}
+	return r
 }
 
 // expectCode fails the test unless the status matches.

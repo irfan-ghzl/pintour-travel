@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/irfan-ghzl/pintour-travel/internal/domain/calendar"
 	domainInvoice "github.com/irfan-ghzl/pintour-travel/internal/domain/invoice"
 	domainLead "github.com/irfan-ghzl/pintour-travel/internal/domain/lead"
 )
@@ -158,7 +159,7 @@ func TestInvoices_SoftDeletedRowsAreHidden(t *testing.T) {
 		ID: "invoice-dihapus", InvoiceNumber: "INV-202608-0009",
 		ParticipantID: "participant-1", BatchID: "batch-1",
 		Amount: 1000000, Status: "diterbitkan",
-		DueDate: time.Now().Add(24 * time.Hour), DeletedAt: &deleted,
+		DueDate: calendar.Today().AddDays(1), DeletedAt: &deleted,
 	})
 
 	res := h.as("admin").GET("/api/v1/admin/invoices")
@@ -193,7 +194,7 @@ func TestInvoices_NumberingSkipsSoftDeletedRows(t *testing.T) {
 			"participant_id": "participant-1",
 			"batch_id":       "batch-1",
 			"amount":         5000000,
-			"due_date":       time.Now().Add(7 * 24 * time.Hour).Format(time.RFC3339),
+			"due_date":       calendar.Today().AddDays(7).Format(time.RFC3339),
 		})
 		res.expectCode(http.StatusCreated)
 		data := res.data()

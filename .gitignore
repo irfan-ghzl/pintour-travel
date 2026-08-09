@@ -11,9 +11,22 @@ bin/
 *.exe
 *.test
 *.out
+*.dll
+*.so
+*.dylib
+# `go build ./cmd/x` di Linux/macOS menghasilkan binari tanpa ekstensi, jadi
+# pola *.exe di atas tidak menangkapnya sama sekali. Ketiga nama di bawah
+# adalah keluaran dari ketiga cmd/ yang ada; puluhan megabita masing-masing.
+/server
+/seed
+/seed-demo
+/run-jobs
+/pintour-server
 vendor/
 coverage.out
 coverage.html
+coverage-*.out
+coverage-*.txt
 
 # ── Node / Frontend ─────────────────────────────────────────────────────────
 web/node_modules/

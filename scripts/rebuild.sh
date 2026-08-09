@@ -46,7 +46,7 @@ if $FRESH; then
   read -p "Yakin reset DB? Semua data akan hilang. [y/N] " confirm
   [[ ! "$confirm" =~ ^[Yy]$ ]] && { warn "Aborted"; exit 0; }
   docker volume rm pintour-travel_db_data > /dev/null 2>&1 || true
-  ok "DB volume removed — migrations 001-005 akan dijalankan ulang"
+  ok "DB volume removed — migrations 001-006 akan dijalankan ulang"
 fi
 
 if ! $SKIP_BUILD; then

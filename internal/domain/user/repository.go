@@ -10,7 +10,6 @@ type Repository interface {
 	Deactivate(ctx context.Context, id string) error
 	ListByRole(ctx context.Context, role string) ([]User, error)
 	ListKonsultan(ctx context.Context) ([]User, error)
-	CountActiveleadsByConsultant(ctx context.Context, consultantID string) (int, error)
 }
 
 type TourLeaderRepository interface {

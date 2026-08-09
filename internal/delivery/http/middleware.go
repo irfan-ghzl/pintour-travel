@@ -158,6 +158,11 @@ func JWTMiddleware(secret string) echo.MiddlewareFunc {
 // the sidebar only hides links, so without this an out-of-scope role could still
 // reach the data by calling the API directly.
 func RequireRole(roles ...string) echo.MiddlewareFunc {
+	// The allow-list is built once per route group rather than walked per
+	// request. domainUser.User.HasRole (§14.4) states the same rule on the
+	// entity, but there is no account here to ask — only the role the token
+	// carries, and constructing a User around it to scan a list would be a
+	// slower way of saying the same thing.
 	allowed := make(map[string]bool, len(roles))
 	for _, r := range roles {
 		allowed[r] = true
@@ -165,7 +170,7 @@ func RequireRole(roles ...string) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			role, _ := c.Get("user_role").(string)
-			if !allowed[role] {
+			if role == "" || !allowed[role] {
 				return c.JSON(http.StatusForbidden, errResponse("FORBIDDEN", "Akses tidak diizinkan untuk peran Anda"))
 			}
 			return next(c)

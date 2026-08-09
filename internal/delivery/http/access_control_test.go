@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/irfan-ghzl/pintour-travel/internal/domain/calendar"
 	domainDocument "github.com/irfan-ghzl/pintour-travel/internal/domain/document"
 	domainInvoice "github.com/irfan-ghzl/pintour-travel/internal/domain/invoice"
 	domainParticipant "github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
@@ -79,13 +80,13 @@ func seedTwoParticipants(h *harness) {
 	h.PortalUsers.Seed(portaluser.PortalUser{
 		ID: "portal-user-a", Phone: "628111000001", Name: "Peserta A",
 	})
-	lastYear := time.Now().Add(-365 * 24 * time.Hour)
+	lastYear := time.Now().AddDate(0, 0, -365)
 	portalUserA := "portal-user-a"
 
 	h.Participants.Seed(domainParticipant.Participant{
 		ID: "participant-a", PortalUserID: &portalUserA, BatchID: "batch-1",
 		Name: "Peserta A", Phone: "628111000001", IsActive: true,
-		BatchDepartureDate: ptrTime(time.Now().Add(30 * 24 * time.Hour)),
+		BatchDepartureDate: ptrTime(time.Now().AddDate(0, 0, 30)),
 	})
 	h.Participants.Seed(domainParticipant.Participant{
 		ID: "participant-a-2019", PortalUserID: &portalUserA, BatchID: "batch-0",
@@ -105,7 +106,7 @@ func seedTwoParticipants(h *harness) {
 		h.Invoices.Seed(domainInvoice.Invoice{
 			ID: "invoice-" + pid, InvoiceNumber: "INV-" + pid, ParticipantID: pid,
 			BatchID: "batch-1", Amount: 25000000, Status: "menunggu_bayar",
-			DueDate: time.Now().Add(24 * time.Hour),
+			DueDate: calendar.Today().AddDays(1),
 		})
 		h.Proofs.Seed(domainInvoice.PaymentProof{
 			ID: "proof-" + pid, InvoiceID: "invoice-" + pid,

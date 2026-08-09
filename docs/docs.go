@@ -227,6 +227,48 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/chatbot-logs": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "chatbot"
+                ],
+                "summary": "Daftar percakapan chatbot per nomor (admin)",
+                "responses": {}
+            }
+        },
+        "/admin/chatbot-logs/{phone}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "chatbot"
+                ],
+                "summary": "Detail percakapan chatbot satu nomor (admin)",
+                "responses": {}
+            }
+        },
+        "/admin/chatbot-logs/{phone}/create-lead": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "chatbot"
+                ],
+                "summary": "Buat leads manual dari percakapan chatbot (admin)",
+                "responses": {}
+            }
+        },
         "/admin/country-requirements": {
             "post": {
                 "security": [
@@ -244,6 +286,73 @@ const docTemplate = `{
                 "responses": {
                     "201": {
                         "description": "Created",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/documents": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "documents"
+                ],
+                "summary": "Daftar dokumen global (admin) — filter status / participant",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter status (menunggu/disetujui/ditolak)",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter peserta",
+                        "name": "participant_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/documents/{id}/ocr-result": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "documents"
+                ],
+                "summary": "Hasil OCR untuk sebuah dokumen (v2.0 F3)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1006,6 +1115,40 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/participants/{id}/nik": {
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "participants"
+                ],
+                "summary": "Set NIK peserta (mis. dari hasil OCR) (v2.0 F3)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Participant ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/admin/participants/{participant_id}/documents": {
             "get": {
                 "security": [
@@ -1023,6 +1166,84 @@ const docTemplate = `{
                         "description": "Participant ID",
                         "name": "participant_id",
                         "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/reports/export": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/octet-stream"
+                ],
+                "tags": [
+                    "reports"
+                ],
+                "summary": "Export laporan (leads/participants/invoices/batches) ke Excel/PDF",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "leads|participants|invoices|batches",
+                        "name": "type",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "excel|pdf",
+                        "name": "format",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "file"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/signed-url": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "upload"
+                ],
+                "summary": "Signed URL berkas privat peserta untuk staf (1 jam, §19.2)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Jenis berkas: document | payment_proof",
+                        "name": "type",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "ID sumber daya (dokumen / bukti bayar)",
+                        "name": "id",
+                        "in": "query",
                         "required": true
                     }
                 ],
@@ -1268,6 +1489,31 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/admin/dashboard/analytics": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboard"
+                ],
+                "summary": "Real-time dashboard analytics (prompt §4.3)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/dashboard/stats": {
             "get": {
                 "security": [
@@ -1480,6 +1726,32 @@ const docTemplate = `{
                 }
             }
         },
+        "/portal/invoices/{id}/create-payment": {
+            "post": {
+                "tags": [
+                    "portal"
+                ],
+                "summary": "Buat transaksi pembayaran Midtrans untuk invoice peserta",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Invoice ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/portal/login": {
             "post": {
                 "consumes": [
@@ -1553,6 +1825,31 @@ const docTemplate = `{
                 }
             }
         },
+        "/portal/my-trips": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "portal"
+                ],
+                "summary": "Riwayat perjalanan peserta — tour aktif + lampau (v2.0 F2)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/portal/signed-url": {
             "get": {
                 "security": [
@@ -1563,19 +1860,19 @@ const docTemplate = `{
                 "tags": [
                     "upload"
                 ],
-                "summary": "Dapatkan signed URL untuk akses file private (1 jam, §19.2)",
+                "summary": "Signed URL berkas privat milik peserta sendiri (1 jam, §19.2)",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Nama bucket",
-                        "name": "bucket",
+                        "description": "Jenis berkas: document | payment_proof",
+                        "name": "type",
                         "in": "query",
                         "required": true
                     },
                     {
                         "type": "string",
-                        "description": "Path file",
-                        "name": "path",
+                        "description": "ID sumber daya (dokumen / bukti bayar)",
+                        "name": "id",
                         "in": "query",
                         "required": true
                     }
@@ -1658,28 +1955,75 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/webhooks/fonnte": {
+            "post": {
+                "tags": [
+                    "webhooks"
+                ],
+                "summary": "Webhook pesan masuk Fonnte → chatbot AI",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/webhooks/midtrans": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "webhooks"
+                ],
+                "summary": "Webhook pembayaran Midtrans (publik, verifikasi signature SHA512)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
         "github_com_irfan-ghzl_pintour-travel_internal_domain_package.Package": {
             "type": "object",
+            "required": [
+                "base_price",
+                "destination",
+                "duration_days",
+                "name"
+            ],
             "properties": {
-                "basePrice": {
-                    "type": "number",
-                    "format": "float64"
+                "base_price": {
+                    "type": "number"
                 },
                 "category": {
-                    "description": "reguler, umroh, halal, honeymoon",
+                    "description": "default reguler",
+                    "type": "string",
+                    "enum": [
+                        "reguler",
+                        "umroh",
+                        "halal",
+                        "honeymoon"
+                    ]
+                },
+                "created_at": {
                     "type": "string"
                 },
-                "createdAt": {
+                "created_by": {
                     "type": "string"
                 },
-                "createdBy": {
-                    "type": "string"
-                },
-                "deletedAt": {
-                    "description": "§13.1 soft delete",
+                "deleted_at": {
                     "type": "string"
                 },
                 "description": {
@@ -1688,29 +2032,29 @@ const docTemplate = `{
                 "destination": {
                     "type": "string"
                 },
-                "durationDays": {
-                    "type": "integer"
+                "duration_days": {
+                    "type": "integer",
+                    "maximum": 365,
+                    "minimum": 1
                 },
                 "facilities": {
-                    "description": "[]string — FR-CAT-03 \"fasilitas yang disertakan\"",
+                    "description": "FR-CAT-03",
                     "type": "array",
                     "items": {
-                        "type": "integer",
-                        "format": "int32"
+                        "type": "integer"
                     }
                 },
                 "id": {
                     "type": "string"
                 },
-                "isActive": {
+                "is_active": {
                     "type": "boolean"
                 },
                 "itinerary": {
                     "description": "[]ItineraryDay",
                     "type": "array",
                     "items": {
-                        "type": "integer",
-                        "format": "int32"
+                        "type": "integer"
                     }
                 },
                 "name": {
@@ -1720,25 +2064,22 @@ const docTemplate = `{
                     "description": "[]string",
                     "type": "array",
                     "items": {
-                        "type": "integer",
-                        "format": "int32"
+                        "type": "integer"
                     }
                 },
                 "slug": {
                     "type": "string"
                 },
-                "termsConditions": {
-                    "description": "FR-CAT-03 \"syarat \u0026 ketentuan\"",
+                "terms_conditions": {
                     "type": "string"
                 },
                 "thumbnail": {
                     "type": "string"
                 },
-                "updatedAt": {
+                "updated_at": {
                     "type": "string"
                 },
-                "visaInfo": {
-                    "description": "FR-CAT-03 \"informasi visa\"",
+                "visa_info": {
                     "type": "string"
                 }
             }

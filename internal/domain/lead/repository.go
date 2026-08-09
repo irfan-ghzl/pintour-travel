@@ -5,10 +5,12 @@ import (
 	"errors"
 )
 
-// ErrNotConvertible is returned by MarkConverted when the lead is not in a state
-// it can be converted from — most often because it has been converted already.
-// A conversion is at most one participant per lead, and this is what says so
-// when two requests race past the caller's own status check.
+// ErrNotConvertible is returned when a lead is not in a state it can be
+// converted from — most often because it has been converted already.
+//
+// Lead.ConvertToParticipant raises it up front, and MarkConverted raises it
+// again at the write: a conversion is at most one participant per lead, and the
+// second check is what says so when two requests race past the first.
 var ErrNotConvertible = errors.New("lead tidak dalam status 'deal'")
 
 type Repository interface {

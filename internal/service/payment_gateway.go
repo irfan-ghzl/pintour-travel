@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/irfan-ghzl/pintour-travel/internal/format"
 )
 
 // MidtransService is a thin Midtrans Snap client (v2.0 F1). Following the same
@@ -104,7 +106,7 @@ func (s *MidtransService) CreateSnap(ctx context.Context, req SnapRequest) (stri
 			"id":       req.OrderID,
 			"price":    req.GrossAmount,
 			"quantity": 1,
-			"name":     truncateRunes(req.ItemName, 50), // Midtrans name max 50 chars
+			"name":     format.TruncateRunes(req.ItemName, 50), // Midtrans name max 50 chars
 		}},
 		"expiry": map[string]interface{}{
 			"unit":     "hours",
@@ -153,12 +155,4 @@ func (s *MidtransService) VerifySignature(orderID, statusCode, grossAmount, sign
 	sum := sha512.Sum512([]byte(orderID + statusCode + grossAmount + s.serverKey))
 	expected := hex.EncodeToString(sum[:])
 	return subtle.ConstantTimeCompare([]byte(expected), []byte(strings.ToLower(signatureKey))) == 1
-}
-
-func truncateRunes(s string, max int) string {
-	r := []rune(s)
-	if len(r) <= max {
-		return s
-	}
-	return string(r[:max])
 }

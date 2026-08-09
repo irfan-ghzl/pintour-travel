@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { FileText, Upload, CheckCircle, Clock, Download, CreditCard } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { portalApi } from '../../utils/api'
+import { formatDateLong } from '../../utils/date'
 import FileUpload from '../../components/FileUpload'
 import type { Invoice, InvoiceStatus, UploadProofRequest } from '../../types'
 
@@ -105,9 +106,7 @@ export default function PortalInvoicePage() {
               <div>
                 <p className="text-xs text-gray-400">Jatuh Tempo</p>
                 <p className="font-medium text-gray-700">
-                  {new Date(inv.due_date).toLocaleDateString('id-ID', {
-                    day: 'numeric', month: 'long', year: 'numeric',
-                  })}
+                  {formatDateLong(inv.due_date)}
                 </p>
               </div>
             </div>

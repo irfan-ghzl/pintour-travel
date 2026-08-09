@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/irfan-ghzl/pintour-travel/internal/domain/calendar"
 	domainLead "github.com/irfan-ghzl/pintour-travel/internal/domain/lead"
 	domainPkg "github.com/irfan-ghzl/pintour-travel/internal/domain/package"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/portaluser"
@@ -37,8 +38,8 @@ func seedConvertible(h *harness) {
 	})
 	h.Batches.Seed(domainPkg.PackageBatch{
 		ID: "batch-1", PackageID: "package-1",
-		DepartureDate: time.Now().Add(60 * 24 * time.Hour),
-		ReturnDate:    time.Now().Add(69 * 24 * time.Hour),
+		DepartureDate: calendar.Today().AddDays(60),
+		ReturnDate:    calendar.Today().AddDays(69),
 		PriceDouble:   25000000, PriceSingle: 30000000, PriceTriple: 22000000,
 		Quota: 40, Status: "tersedia",
 	})

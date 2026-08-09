@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/irfan-ghzl/pintour-travel/internal/domain/calendar"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/document"
 	domainLead "github.com/irfan-ghzl/pintour-travel/internal/domain/lead"
 	domainPkg "github.com/irfan-ghzl/pintour-travel/internal/domain/package"
@@ -190,7 +191,7 @@ func TestRoomTypeValidated(t *testing.T) {
 		})
 		h.Batches.Seed(domainPkg.PackageBatch{
 			ID: "batch-1", PackageID: "package-1", Quota: 40, Status: "tersedia",
-			DepartureDate: time.Now().Add(30 * 24 * time.Hour),
+			DepartureDate: calendar.Today().AddDays(30),
 		})
 	}
 
@@ -226,7 +227,7 @@ func TestInvoiceStatusValidated(t *testing.T) {
 			"participant_id": "participant-1",
 			"batch_id":       "batch-1",
 			"amount":         25000000,
-			"due_date":       time.Now().Add(7 * 24 * time.Hour).Format(time.RFC3339),
+			"due_date":       calendar.Today().AddDays(7).String(),
 		}
 		if status != "" {
 			body["status"] = status
@@ -350,8 +351,8 @@ func TestCatalogVocabulariesValidated(t *testing.T) {
 	}
 	newBatch := func(status string) map[string]any {
 		body := map[string]any{
-			"departure_date": time.Now().Add(60 * 24 * time.Hour).Format(time.RFC3339),
-			"return_date":    time.Now().Add(67 * 24 * time.Hour).Format(time.RFC3339),
+			"departure_date": calendar.Today().AddDays(60).String(),
+			"return_date":    calendar.Today().AddDays(67).String(),
 			"quota":          40, "price_single": 35000000,
 			"price_double": 30000000, "price_triple": 28000000,
 		}

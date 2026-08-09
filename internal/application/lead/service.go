@@ -141,15 +141,26 @@ func (s *Service) ListLeads(ctx context.Context, f domainLead.Filter) ([]domainL
 	return s.leads.List(ctx, f)
 }
 
+// UpdateStatus moves a lead and records who moved it.
+//
+// Whether the move is allowed is the lead's own rule (§14.4
+// Lead.ChangeStatus); persisting it together with the audit-trail row is the
+// repository's, which is why the entity here is a stand-in carrying only the
+// id and the status being applied.
 func (s *Service) UpdateStatus(ctx context.Context, id, status, changedBy string) error {
-	if !domainLead.IsValidStatus(status) {
-		return domainLead.ErrInvalidStatus
+	l := domainLead.Lead{ID: id}
+	if err := l.ChangeStatus(status); err != nil {
+		return err
 	}
-	return s.leads.UpdateStatus(ctx, id, status, changedBy)
+	return s.leads.UpdateStatus(ctx, l.ID, l.Status, changedBy)
 }
 
 func (s *Service) AssignLead(ctx context.Context, leadID, consultantID string) error {
-	return s.leads.AssignTo(ctx, leadID, consultantID)
+	l := domainLead.Lead{ID: leadID}
+	if err := l.AssignTo(consultantID); err != nil {
+		return err
+	}
+	return s.leads.AssignTo(ctx, l.ID, *l.AssignedTo)
 }
 
 func (s *Service) AddNote(ctx context.Context, n *domainLead.Note) error {

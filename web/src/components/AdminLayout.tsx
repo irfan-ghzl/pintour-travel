@@ -1,20 +1,23 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, Package, Users, FileText, ClipboardList,
-  Plane, FolderCheck, LogOut, MapPin, Shield, UserCheck, Globe,
+  Plane, FolderCheck, LogOut, MapPin, Shield, UserCheck, Globe, BarChart3, Bot,
 } from 'lucide-react'
 import { authStorage } from '../utils/auth'
 
+// roles: [] = semua staff. Selaras dengan RBAC backend (RequireRole) & RoleRoute.
 const sidebarLinks = [
   { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, exact: true, roles: [] },
-  { to: '/admin/packages', label: 'Paket Wisata', icon: Package, roles: [] },
+  { to: '/admin/packages', label: 'Paket Wisata', icon: Package, roles: ['super_admin', 'admin'] },
   { to: '/admin/leads', label: 'CRM Leads', icon: Users, roles: ['super_admin', 'admin', 'konsultan'] },
-  { to: '/admin/participants', label: 'Peserta', icon: ClipboardList, roles: ['super_admin', 'admin'] },
+  { to: '/admin/participants', label: 'Peserta', icon: ClipboardList, roles: ['super_admin', 'admin', 'konsultan'] },
   { to: '/admin/invoices', label: 'Invoice', icon: FileText, roles: ['super_admin', 'admin'] },
   { to: '/admin/documents', label: 'Review Dokumen', icon: FolderCheck, roles: ['super_admin', 'admin'] },
-  { to: '/admin/airport', label: 'Airport Handling', icon: Plane, roles: [] },
+  { to: '/admin/airport', label: 'Airport Handling', icon: Plane, roles: ['super_admin', 'admin', 'tour_leader'] },
   { to: '/admin/tour-leaders', label: 'Profil Tour Leader', icon: UserCheck, roles: ['super_admin', 'admin'] },
   { to: '/admin/country-requirements', label: 'Persyaratan Dokumen', icon: Globe, roles: ['super_admin', 'admin'] },
+  { to: '/admin/reports', label: 'Laporan & Export', icon: BarChart3, roles: ['super_admin', 'admin'] },
+  { to: '/admin/chatbot-logs', label: 'Chatbot Logs', icon: Bot, roles: ['super_admin', 'admin'] },
   { to: '/admin/users', label: 'Manajemen User', icon: Shield, roles: ['super_admin'] },
 ]
 

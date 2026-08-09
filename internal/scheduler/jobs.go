@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-co-op/gocron/v2" // PRD §18: gocron untuk cron in-process
 
+	"github.com/irfan-ghzl/pintour-travel/internal/config"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/notification"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
 	domainUser "github.com/irfan-ghzl/pintour-travel/internal/domain/user"
@@ -189,7 +190,7 @@ func (s *Scheduler) sendDepartureReminders() {
 			// §3.2 H-14 reminder email (checklist persiapan).
 			if r.days == 14 && s.email != nil && p.Email != "" {
 				_ = s.email.SendEmailReminderH14(ctx, p.Email, p.Name, p.PackageName, depDate,
-					envOr("PORTAL_BASE_URL", "http://localhost:3000")+"/portal")
+					config.PortalBaseURL()+"/portal")
 			}
 			time.Sleep(time.Second)
 		}
@@ -223,7 +224,7 @@ func (s *Scheduler) activateBriefing() {
 		// §3.2 briefing-activated email.
 		if s.email != nil && p.Email != "" {
 			_ = s.email.SendEmailBriefingActivated(ctx, p.Email, p.Name, p.PackageName, "",
-				depDate, envOr("PORTAL_BASE_URL", "http://localhost:3000")+"/portal/briefing")
+				depDate, config.PortalBaseURL()+"/portal/briefing")
 		}
 		time.Sleep(time.Second)
 	}

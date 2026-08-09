@@ -86,15 +86,6 @@ func (r *documentRepo) List(ctx context.Context, f document.Filter) ([]document.
 	return list, total, err
 }
 
-// CountByStatus counts without reading. The admin dashboard used to fetch every
-// pending document in order to take len() of the slice.
-func (r *documentRepo) CountByStatus(ctx context.Context, status string) (int, error) {
-	var n int
-	err := r.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM documents WHERE status=$1 AND deleted_at IS NULL`, status).Scan(&n)
-	return n, err
-}
-
 func (r *documentRepo) ListByParticipant(ctx context.Context, participantID string) ([]document.Document, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT d.id,d.participant_id,d.document_type,d.file_path,d.file_name,

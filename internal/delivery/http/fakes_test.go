@@ -145,6 +145,10 @@ func (r *fakeUserRepo) Seed(u domainUser.User) *domainUser.User {
 	return r.users[u.ID]
 }
 
+// GetByEmail answers (nil, nil) for an address nobody holds, which is what the
+// Postgres repository does on sql.ErrNoRows. Returning an error instead made
+// this fake disagree with the real one about the one condition Login branches
+// on — an unknown email came back as 500 here and 401 in production.
 func (r *fakeUserRepo) GetByEmail(_ context.Context, email string) (*domainUser.User, error) {
 	if r.err != nil {
 		return nil, r.err
@@ -154,7 +158,7 @@ func (r *fakeUserRepo) GetByEmail(_ context.Context, email string) (*domainUser.
 			return u, nil
 		}
 	}
-	return nil, errNotFound
+	return nil, nil
 }
 
 func (r *fakeUserRepo) GetByID(_ context.Context, id string) (*domainUser.User, error) {
@@ -229,13 +233,6 @@ func (r *fakeUserRepo) ListByRole(_ context.Context, role string) ([]domainUser.
 
 func (r *fakeUserRepo) ListKonsultan(ctx context.Context) ([]domainUser.User, error) {
 	return r.ListByRole(ctx, "konsultan")
-}
-
-func (r *fakeUserRepo) CountActiveleadsByConsultant(_ context.Context, _ string) (int, error) {
-	if r.err != nil {
-		return 0, r.err
-	}
-	return 0, nil
 }
 
 // ─── user.TourLeaderRepository ────────────────────────────────────────────────
@@ -696,13 +693,6 @@ func (r *fakeParticipantRepo) ListByDepartureDaysAhead(_ context.Context, _ int)
 	return nil, nil
 }
 
-func (r *fakeParticipantRepo) ListWithUnpaidInvoiceDaysOld(_ context.Context, _ int) ([]domainParticipant.Participant, error) {
-	if r.err != nil {
-		return nil, r.err
-	}
-	return nil, nil
-}
-
 func (r *fakeParticipantRepo) snapshot() func() {
 	return snapshotRows(&r.participants, &r.order)
 }
@@ -760,18 +750,6 @@ func (r *fakePortalUserRepo) GetByPhone(_ context.Context, phone string) (*porta
 		}
 	}
 	return nil, errNotFound
-}
-
-func (r *fakePortalUserRepo) UpdatePassword(_ context.Context, id, passwordHash string) error {
-	if r.err != nil {
-		return r.err
-	}
-	u, ok := r.users[id]
-	if !ok {
-		return errNotFound
-	}
-	u.PasswordHash = passwordHash
-	return nil
 }
 
 func (r *fakePortalUserRepo) snapshot() func() {
@@ -845,18 +823,6 @@ func (r *fakeInvoiceRepo) GetByID(_ context.Context, id string) (*domainInvoice.
 	return inv, nil
 }
 
-func (r *fakeInvoiceRepo) GetByNumber(_ context.Context, number string) (*domainInvoice.Invoice, error) {
-	if r.err != nil {
-		return nil, r.err
-	}
-	for _, id := range r.order {
-		if inv := r.invoices[id]; inv.InvoiceNumber == number {
-			return inv, nil
-		}
-	}
-	return nil, errNotFound
-}
-
 func (r *fakeInvoiceRepo) List(_ context.Context, f domainInvoice.Filter) ([]domainInvoice.Invoice, int, error) {
 	if r.err != nil {
 		return nil, 0, r.err
@@ -912,25 +878,6 @@ func (r *fakeInvoiceRepo) NextSequence(_ context.Context, yearMonth string) (int
 		}
 	}
 	return maxSeq + 1, nil
-}
-
-func (r *fakeInvoiceRepo) ListUnpaidOlderThan(_ context.Context, _ int) ([]domainInvoice.Invoice, error) {
-	if r.err != nil {
-		return nil, r.err
-	}
-	return nil, nil
-}
-
-func (r *fakeInvoiceRepo) GetByOrderID(_ context.Context, orderID string) (*domainInvoice.Invoice, error) {
-	if r.err != nil {
-		return nil, r.err
-	}
-	for _, id := range r.order {
-		if inv := r.invoices[id]; inv.MidtransOrderID == orderID {
-			return inv, nil
-		}
-	}
-	return nil, errNotFound
 }
 
 func (r *fakeInvoiceRepo) SetSnap(_ context.Context, id, snapToken, orderID string) error {
@@ -1387,19 +1334,6 @@ func (r *fakeDocumentRepo) List(_ context.Context, f document.Filter) ([]documen
 	return matched[start:end], total, nil
 }
 
-func (r *fakeDocumentRepo) CountByStatus(_ context.Context, status string) (int, error) {
-	if r.err != nil {
-		return 0, r.err
-	}
-	n := 0
-	for _, d := range r.documents {
-		if d.Status == status {
-			n++
-		}
-	}
-	return n, nil
-}
-
 // ListByParticipant is unpaginated by contract: it feeds the review summary,
 // which has to count every one of a participant's documents.
 func (r *fakeDocumentRepo) ListByParticipant(_ context.Context, participantID string) ([]document.Document, error) {
@@ -1567,18 +1501,6 @@ func (r *fakeAirportRepo) Seed(c airport.Checklist) { r.checklists = append(r.ch
 
 func (r *fakeAirportRepo) InitForBatch(_ context.Context, _ string) error { return r.err }
 
-func (r *fakeAirportRepo) GetByParticipant(_ context.Context, participantID, batchID string) (*airport.Checklist, error) {
-	if r.err != nil {
-		return nil, r.err
-	}
-	for i := range r.checklists {
-		if r.checklists[i].ParticipantID == participantID && r.checklists[i].BatchID == batchID {
-			return &r.checklists[i], nil
-		}
-	}
-	return nil, errNotFound
-}
-
 func (r *fakeAirportRepo) ListByBatch(_ context.Context, f airport.Filter) ([]airport.Checklist, error) {
 	if r.err != nil {
 		return nil, r.err
@@ -1588,11 +1510,8 @@ func (r *fakeAirportRepo) ListByBatch(_ context.Context, f airport.Filter) ([]ai
 		if c.BatchID != f.BatchID {
 			continue
 		}
-		if f.Status != nil {
-			done := c.BaggageChecked && c.TicketDistributed && c.PassportReturned
-			if (*f.Status == "done") != done {
-				continue
-			}
+		if f.Status != nil && (*f.Status == "done") != c.IsComplete() {
+			continue
 		}
 		out = append(out, c)
 	}
@@ -1600,36 +1519,26 @@ func (r *fakeAirportRepo) ListByBatch(_ context.Context, f airport.Filter) ([]ai
 }
 
 func (r *fakeAirportRepo) UpdateBaggage(_ context.Context, participantID, batchID, handledBy string) error {
-	return r.mark(participantID, batchID, handledBy, func(c *airport.Checklist, now time.Time) {
-		c.BaggageChecked = true
-		c.BaggageCheckedAt = &now
-	})
+	return r.mark(participantID, batchID, handledBy, (*airport.Checklist).MarkBaggage)
 }
 
 func (r *fakeAirportRepo) UpdateTicket(_ context.Context, participantID, batchID, handledBy string) error {
-	return r.mark(participantID, batchID, handledBy, func(c *airport.Checklist, now time.Time) {
-		c.TicketDistributed = true
-		c.TicketDistributedAt = &now
-	})
+	return r.mark(participantID, batchID, handledBy, (*airport.Checklist).MarkTicket)
 }
 
 func (r *fakeAirportRepo) UpdatePassport(_ context.Context, participantID, batchID, handledBy string) error {
-	return r.mark(participantID, batchID, handledBy, func(c *airport.Checklist, now time.Time) {
-		c.PassportReturned = true
-		c.PassportReturnedAt = &now
-	})
+	return r.mark(participantID, batchID, handledBy, (*airport.Checklist).MarkPassport)
 }
 
-func (r *fakeAirportRepo) mark(participantID, batchID, handledBy string, apply func(*airport.Checklist, time.Time)) error {
+// mark applies one of the checklist's own step methods (§14.4), so the in-memory
+// repository records a step exactly as the entity defines it.
+func (r *fakeAirportRepo) mark(participantID, batchID, handledBy string, step func(*airport.Checklist, string, time.Time)) error {
 	if r.err != nil {
 		return r.err
 	}
 	for i := range r.checklists {
 		if r.checklists[i].ParticipantID == participantID && r.checklists[i].BatchID == batchID {
-			now := time.Now()
-			apply(&r.checklists[i], now)
-			r.checklists[i].HandledBy = &handledBy
-			r.checklists[i].UpdatedAt = now
+			step(&r.checklists[i], handledBy, time.Now())
 			return nil
 		}
 	}
@@ -1646,7 +1555,7 @@ func (r *fakeAirportRepo) GetBatchProgress(_ context.Context, batchID string) (*
 			continue
 		}
 		p.TotalPax++
-		if c.BaggageChecked && c.TicketDistributed && c.PassportReturned {
+		if c.IsComplete() {
 			p.DoneCount++
 		} else {
 			p.PendingCount++

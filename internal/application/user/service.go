@@ -60,7 +60,7 @@ func (s *UserService) Login(ctx context.Context, req LoginRequest) (*LoginRespon
 		return nil, http.StatusUnauthorized, fmt.Errorf("invalid credentials")
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(req.Password)); err != nil {
+	if !u.Authenticate(req.Password) {
 		return nil, http.StatusUnauthorized, fmt.Errorf("invalid credentials")
 	}
 

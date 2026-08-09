@@ -59,7 +59,19 @@ func (s *Service) ListImages(ctx context.Context, packageID string) ([]domainPkg
 	return s.images.ListByPackage(ctx, packageID)
 }
 
-func (s *Service) CreateBatch(ctx context.Context, b *domainPkg.PackageBatch) error {
+// CreateBatch opens a departure on a package.
+//
+// The package is loaded so it can vet the batch itself (§14.4
+// Package.AddBatch) — which package the departure belongs to is the package's
+// business, not the caller's to assert.
+func (s *Service) CreateBatch(ctx context.Context, packageID string, b *domainPkg.PackageBatch) error {
+	p, err := s.packages.GetByID(ctx, packageID)
+	if err != nil {
+		return err
+	}
+	if err := p.AddBatch(b); err != nil {
+		return err
+	}
 	return s.batches.Create(ctx, b)
 }
 

@@ -22,31 +22,6 @@ func (r *airportRepo) InitForBatch(ctx context.Context, batchID string) error {
 	return err
 }
 
-func (r *airportRepo) GetByParticipant(ctx context.Context, participantID, batchID string) (*airport.Checklist, error) {
-	var c airport.Checklist
-	err := r.db.QueryRowContext(ctx, `
-		SELECT ac.id,ac.participant_id,ac.batch_id,
-		ac.baggage_checked,ac.baggage_checked_at,
-		ac.ticket_distributed,ac.ticket_distributed_at,
-		ac.passport_returned,ac.passport_returned_at,
-		ac.handled_by,COALESCE(ac.notes,''),ac.updated_at,
-		p.name,p.phone,COALESCE(u.name,'')
-		FROM airport_checklists ac
-		JOIN participants p ON p.id=ac.participant_id
-		LEFT JOIN users u ON u.id=ac.handled_by
-		WHERE ac.participant_id=$1 AND ac.batch_id=$2 AND ac.deleted_at IS NULL`, participantID, batchID,
-	).Scan(&c.ID, &c.ParticipantID, &c.BatchID,
-		&c.BaggageChecked, &c.BaggageCheckedAt,
-		&c.TicketDistributed, &c.TicketDistributedAt,
-		&c.PassportReturned, &c.PassportReturnedAt,
-		&c.HandledBy, &c.Notes, &c.UpdatedAt,
-		&c.ParticipantName, &c.ParticipantPhone, &c.HandledByName)
-	if err != nil {
-		return nil, err
-	}
-	return &c, nil
-}
-
 func (r *airportRepo) ListByBatch(ctx context.Context, f airport.Filter) ([]airport.Checklist, error) {
 	q := `SELECT ac.id,ac.participant_id,ac.batch_id,
 		ac.baggage_checked,ac.baggage_checked_at,

@@ -9,9 +9,9 @@ import (
 	"log"
 	"math/big"
 	"strings"
-	"time"
 
 	invoicesvc "github.com/irfan-ghzl/pintour-travel/internal/application/invoice"
+	"github.com/irfan-ghzl/pintour-travel/internal/domain/calendar"
 	domainDocument "github.com/irfan-ghzl/pintour-travel/internal/domain/document"
 	domainInvoice "github.com/irfan-ghzl/pintour-travel/internal/domain/invoice"
 	domainLead "github.com/irfan-ghzl/pintour-travel/internal/domain/lead"
@@ -96,20 +96,21 @@ type ConvertResult struct {
 // one still worked. Since portal accounts have no reset flow, that locked the
 // participant out for good — with no error anywhere to say so.
 func (s *Service) ConvertFromLead(ctx context.Context, leadID, batchID, roomType, issuedBy, portalBaseURL string) (*ConvertResult, error) {
-	// Refused here rather than at the column: the write that would fail is in the
-	// middle of the unit, and "tipe kamar tidak dikenal" is a better answer than
-	// a rolled-back conversion reporting a constraint violation.
-	if !domainParticipant.IsValidRoomType(roomType) {
-		return nil, fmt.Errorf("tipe kamar %q tidak dikenal (pilih: %s)",
-			roomType, strings.Join(domainParticipant.RoomTypes, ", "))
-	}
-
 	l, err := s.leads.GetByID(ctx, leadID)
 	if err != nil {
 		return nil, fmt.Errorf("lead not found: %w", err)
 	}
-	if l.Status != "deal" {
-		return nil, fmt.Errorf("lead status harus 'deal' untuk dikonversi")
+
+	// The participant the lead becomes is derived before the unit is entered
+	// (§14.4 Lead.ConvertToParticipant), so everything decidable without a
+	// database — the lead is closed, the batch is named, the room type is one
+	// the schema knows — is decided before a single row is written. A room type
+	// refused at the column would fail in the middle of the unit, and
+	// "tipe kamar tidak dikenal" is a better answer than a rolled-back
+	// conversion reporting a constraint violation.
+	p, err := l.ConvertToParticipant(batchID, roomType)
+	if err != nil {
+		return nil, err
 	}
 
 	res := &ConvertResult{}
@@ -122,16 +123,7 @@ func (s *Service) ConvertFromLead(ctx context.Context, leadID, batchID, roomType
 		}
 		identity = resolved
 
-		p := &domainParticipant.Participant{
-			LeadID:         &leadID,
-			BatchID:        batchID,
-			Name:           l.Name,
-			Phone:          l.Phone,
-			Email:          l.Email,
-			RoomType:       roomType,
-			PortalPassword: identity.passwordHash, // kept in sync for backward-compat reads
-			IsActive:       false,
-		}
+		p.PortalPassword = identity.passwordHash // kept in sync for backward-compat reads
 		if identity.id != "" {
 			portalUserID := identity.id
 			p.PortalUserID = &portalUserID
@@ -166,7 +158,6 @@ func (s *Service) ConvertFromLead(ctx context.Context, leadID, batchID, roomType
 	// throwing away the conversion that succeeded.
 	//
 	// §1.1 Auto-generate invoice.
-	p := res.Participant
 	if err := s.autoGenerateInvoice(ctx, l, p, batchID, roomType, issuedBy); err != nil {
 		log.Printf("convert[%s]: auto-generate invoice failed: %v", p.ID, err)
 	}
@@ -296,7 +287,7 @@ func (s *Service) autoGenerateInvoice(ctx context.Context, l *domainLead.Lead, p
 		ParticipantID: p.ID,
 		BatchID:       batchID,
 		Amount:        price * float64(pax),
-		DueDate:       time.Now().AddDate(0, 0, 7),
+		DueDate:       calendar.Today().AddDays(7),
 		IssuedBy:      issuedBy,
 		Notes:         "Invoice otomatis dibuat saat konversi leads.",
 	}
@@ -353,7 +344,7 @@ func (s *Service) UpdateProfile(ctx context.Context, p *domainParticipant.Partic
 func (s *Service) PortalLogin(ctx context.Context, phone, password string) (*domainParticipant.Participant, error) {
 	pu, err := lookupPortalUser(ctx, s.portalUsers, phone)
 	if err == nil && pu != nil {
-		if bcrypt.CompareHashAndPassword([]byte(pu.PasswordHash), []byte(password)) != nil {
+		if !pu.VerifyPassword(password) { // §14.4 PortalUser.VerifyPassword
 			return nil, fmt.Errorf("nomor WA atau password salah")
 		}
 		trips, err := s.participants.ListByPortalUser(ctx, pu.ID, phone)

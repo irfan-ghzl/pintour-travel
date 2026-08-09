@@ -112,35 +112,3 @@ func queryPageSize(c echo.Context, name string, defaultVal int) int {
 	}
 	return maxPerPage
 }
-
-func queryStringPtr(c echo.Context, name string) *string {
-	v := c.QueryParam(name)
-	if v == "" {
-		return nil
-	}
-	return &v
-}
-
-func queryFloat64Ptr(c echo.Context, name string) *float64 {
-	s := c.QueryParam(name)
-	if s == "" {
-		return nil
-	}
-	v, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		return nil
-	}
-	return &v
-}
-
-func queryIntPtr(c echo.Context, name string) *int {
-	s := c.QueryParam(name)
-	if s == "" {
-		return nil
-	}
-	v, err := strconv.Atoi(s)
-	if err != nil || v <= 0 {
-		return nil
-	}
-	return &v
-}

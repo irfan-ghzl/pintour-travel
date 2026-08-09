@@ -1,8 +1,9 @@
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { FileText, LayoutDashboard, List, BookOpen, LogOut, Receipt, Shield, User } from 'lucide-react'
+import { FileText, LayoutDashboard, List, BookOpen, LogOut, Receipt, Shield, User, History } from 'lucide-react'
 
 const navItems = [
   { to: '/portal', label: 'Dashboard', icon: LayoutDashboard, exact: true },
+  { to: '/portal/trips', label: 'Riwayat', icon: History },
   { to: '/portal/invoices', label: 'Invoice', icon: Receipt },
   { to: '/portal/documents', label: 'Dokumen', icon: FileText },
   { to: '/portal/itinerary', label: 'Itinerary', icon: List },

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/irfan-ghzl/pintour-travel/internal/domain/calendar"
 	domainInvoice "github.com/irfan-ghzl/pintour-travel/internal/domain/invoice"
 	domainParticipant "github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
 	"github.com/irfan-ghzl/pintour-travel/internal/service"
@@ -41,14 +42,6 @@ func (r *fakeInvoiceRepo) GetByID(_ context.Context, id string) (*domainInvoice.
 	}
 	return inv, nil
 }
-func (r *fakeInvoiceRepo) GetByNumber(_ context.Context, number string) (*domainInvoice.Invoice, error) {
-	for _, inv := range r.stored {
-		if inv.InvoiceNumber == number {
-			return inv, nil
-		}
-	}
-	return nil, fmt.Errorf("not found")
-}
 func (r *fakeInvoiceRepo) List(_ context.Context, _ domainInvoice.Filter) ([]domainInvoice.Invoice, int, error) {
 	out := make([]domainInvoice.Invoice, 0, len(r.stored))
 	for _, inv := range r.stored {
@@ -68,17 +61,6 @@ func (r *fakeInvoiceRepo) Confirm(_ context.Context, id, userID string) error {
 		inv.ConfirmedBy = &userID
 	}
 	return nil
-}
-func (r *fakeInvoiceRepo) ListUnpaidOlderThan(_ context.Context, _ int) ([]domainInvoice.Invoice, error) {
-	return nil, nil
-}
-func (r *fakeInvoiceRepo) GetByOrderID(_ context.Context, orderID string) (*domainInvoice.Invoice, error) {
-	for _, inv := range r.stored {
-		if inv.MidtransOrderID == orderID {
-			return inv, nil
-		}
-	}
-	return nil, fmt.Errorf("not found")
 }
 func (r *fakeInvoiceRepo) SetSnap(_ context.Context, id, token, orderID string) error {
 	if inv, ok := r.stored[id]; ok {
@@ -138,9 +120,6 @@ func (r *fakeParticipantRepo) ListByBatch(_ context.Context, _ string) ([]domain
 func (r *fakeParticipantRepo) ListByDepartureDaysAhead(_ context.Context, _ int) ([]domainParticipant.Participant, error) {
 	return nil, nil
 }
-func (r *fakeParticipantRepo) ListWithUnpaidInvoiceDaysOld(_ context.Context, _ int) ([]domainParticipant.Participant, error) {
-	return nil, nil
-}
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -156,7 +135,7 @@ func TestCreate_GeneratesInvoiceNumber(t *testing.T) {
 		ParticipantID: "p1",
 		BatchID:       "b1",
 		Amount:        25000000,
-		DueDate:       time.Now().Add(30 * 24 * time.Hour),
+		DueDate:       calendar.Today().AddDays(30),
 		IssuedBy:      "u1",
 	}
 	if err := svc.Create(context.Background(), inv); err != nil {
@@ -189,7 +168,7 @@ func TestCreate_IncrementsSequence(t *testing.T) {
 	for i, want := range expected {
 		inv := &domainInvoice.Invoice{
 			ParticipantID: "p1", BatchID: "b1", Amount: 1000000,
-			DueDate: time.Now().Add(time.Hour), IssuedBy: "u1",
+			DueDate: calendar.Today(), IssuedBy: "u1",
 		}
 		if err := svc.Create(context.Background(), inv); err != nil {
 			t.Fatalf("Create #%d error: %v", i+1, err)
@@ -209,7 +188,7 @@ func TestConfirmPayment_ActivatesPortal(t *testing.T) {
 	// Create first
 	inv := &domainInvoice.Invoice{
 		ParticipantID: "participant-123", BatchID: "b1",
-		Amount: 5000000, DueDate: time.Now().Add(time.Hour), IssuedBy: "u1",
+		Amount: 5000000, DueDate: calendar.Today(), IssuedBy: "u1",
 	}
 	if err := svc.Create(context.Background(), inv); err != nil {
 		t.Fatal(err)
@@ -231,7 +210,7 @@ func TestUploadProof_TransitionsStatus(t *testing.T) {
 
 	inv := &domainInvoice.Invoice{
 		ParticipantID: "p1", BatchID: "b1",
-		Amount: 1000000, DueDate: time.Now().Add(time.Hour), IssuedBy: "u1",
+		Amount: 1000000, DueDate: calendar.Today(), IssuedBy: "u1",
 	}
 	_ = svc.Create(context.Background(), inv)
 
@@ -250,18 +229,5 @@ func TestUploadProof_TransitionsStatus(t *testing.T) {
 	}
 }
 
-func TestFormatRupiah_AppLevel(t *testing.T) {
-	cases := []struct {
-		in   float64
-		want string
-	}{
-		{0, "0"},
-		{1000, "1.000"},
-		{25000000, "25.000.000"},
-	}
-	for _, c := range cases {
-		if got := formatRupiah(c.in); got != c.want {
-			t.Errorf("formatRupiah(%v) = %q, want %q", c.in, got, c.want)
-		}
-	}
-}
+// The rupiah formatter moved to internal/format, where it is tested once for
+// every caller instead of once per package that happened to copy it.

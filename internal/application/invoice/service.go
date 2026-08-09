@@ -5,33 +5,29 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/irfan-ghzl/pintour-travel/internal/config"
 	domainInvoice "github.com/irfan-ghzl/pintour-travel/internal/domain/invoice"
 	domainParticipant "github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/uow"
+	"github.com/irfan-ghzl/pintour-travel/internal/format"
 	"github.com/irfan-ghzl/pintour-travel/internal/safe"
 	"github.com/irfan-ghzl/pintour-travel/internal/service"
 )
-
-// portalBaseURL returns the participant portal base URL from env (fallback dev).
-func portalBaseURL() string {
-	if v := os.Getenv("PORTAL_BASE_URL"); v != "" {
-		return v
-	}
-	return "http://localhost:3000"
-}
 
 // ErrNotOwned is returned when an invoice does not belong to the requesting
 // participant. Handlers should map this to 404 (not 403) so the existence of
 // other participants' invoices is not revealed.
 var ErrNotOwned = errors.New("invoice not found")
 
-// ErrInvoiceAlreadyPaid is returned when a fully-paid invoice is sent to the gateway.
-var ErrInvoiceAlreadyPaid = errors.New("invoice sudah lunas")
+// ErrInvoiceAlreadyPaid is returned when a fully-paid invoice is sent to the
+// gateway. It is the domain's own sentinel: "this invoice is settled" is one
+// condition, and a caller matching on it should not have to know whether the
+// confirm path or the gateway path raised it.
+var ErrInvoiceAlreadyPaid = domainInvoice.ErrAlreadySettled
 
 // ErrProofNotForInvoice is returned when a payment proof is reviewed against an
 // invoice it was not uploaded against.
@@ -107,7 +103,7 @@ func (s *Service) Create(ctx context.Context, inv *domainInvoice.Invoice) error 
 		if err != nil {
 			return
 		}
-		amount := fmt.Sprintf("Rp %s", formatRupiah(inv.Amount))
+		amount := fmt.Sprintf("Rp %s", format.Rupiah(inv.Amount))
 		dueDate := inv.DueDate.Format("02 Jan 2006")
 		pdfLink := inv.PDFPath
 		if pdfLink == "" {
@@ -118,7 +114,7 @@ func (s *Service) Create(ctx context.Context, inv *domainInvoice.Invoice) error 
 		// §3.2 email invoice (formal, tabel rincian).
 		if s.email != nil && pt.Email != "" {
 			_ = s.email.SendEmailInvoice(bgCtx, pt.Email, pt.Name, inv.InvoiceNumber,
-				pt.PackageName, formatRupiah(inv.Amount), dueDate, portalBaseURL()+"/portal")
+				pt.PackageName, format.Rupiah(inv.Amount), dueDate, config.PortalBaseURL()+"/portal")
 		}
 	})
 
@@ -250,8 +246,15 @@ func (s *Service) ConfirmPayment(ctx context.Context, invoiceID, confirmedBy, po
 	if err != nil {
 		return err
 	}
-	if inv.Status == "lunas" {
-		return nil
+	// §14.4 Invoice.ConfirmPayment owns the rule; the repository owns the write.
+	// An invoice already settled comes back as ErrAlreadySettled, which is a
+	// no-op here rather than a failure — the money did arrive, it just must not
+	// be announced to the participant a second time.
+	if err := inv.ConfirmPayment(confirmedBy, time.Now()); err != nil {
+		if errors.Is(err, ErrInvoiceAlreadyPaid) {
+			return nil
+		}
+		return err
 	}
 	if err := s.invoices.Confirm(ctx, invoiceID, confirmedBy); err != nil {
 		return err
@@ -374,9 +377,11 @@ func (s *Service) settleApprovedProof(
 		}
 	}
 
-	fullyPaid := paid >= inv.Amount
+	// §14.4 Invoice.IsFullyPaid — the same rule the gateway path applies, so a
+	// payment cannot count as full here and partial there.
+	fullyPaid := inv.IsFullyPaid(paid)
 	switch {
-	case fullyPaid && inv.Status != "lunas":
+	case fullyPaid && inv.Status != domainInvoice.StatusSettled:
 		if err := repos.Invoices.Confirm(ctx, inv.ID, reviewedBy); err != nil {
 			return nil, err
 		}
@@ -414,7 +419,7 @@ func (st *settlement) notify(s *Service) {
 	}
 	base := st.portalBaseURL
 	if base == "" {
-		base = portalBaseURL()
+		base = config.PortalBaseURL()
 	}
 	if st.rejected {
 		safe.Go("notifikasi pembayaran ditolak", func() {
@@ -433,7 +438,7 @@ func (s *Service) notifyPaymentReceived(inv *domainInvoice.Invoice, amountClaime
 	if err != nil {
 		return
 	}
-	amount := formatRupiah(amountClaimed)
+	amount := format.Rupiah(amountClaimed)
 	_ = s.fonnte.SendPaymentReceived(ctx, pt.Phone, pt.Name, amount, pt.PackageName, inv.ID)
 	if s.email != nil && pt.Email != "" {
 		_ = s.email.SendEmailPaymentReceived(ctx, pt.Email, pt.Name, inv.InvoiceNumber, amount, time.Now().Format("02 Jan 2006"))
@@ -478,7 +483,7 @@ func (s *Service) CreatePaymentForParticipant(ctx context.Context, invoiceID, pa
 	if err != nil {
 		return "", "", err
 	}
-	remaining := inv.Amount - paid
+	remaining := inv.RemainingBalance(paid) // §14.4 Invoice.RemainingBalance
 	if remaining <= 0 {
 		return "", "", ErrInvoiceAlreadyPaid
 	}
@@ -633,17 +638,4 @@ func (s *Service) notifyPaymentRejected(inv *domainInvoice.Invoice, reason, port
 	if s.email != nil && pt.Email != "" {
 		_ = s.email.SendEmailPaymentRejected(ctx, pt.Email, pt.Name, inv.InvoiceNumber, reason, portalLink)
 	}
-}
-
-func formatRupiah(amount float64) string {
-	s := fmt.Sprintf("%.0f", amount)
-	n := len(s)
-	result := make([]byte, 0, n+n/3)
-	for i, c := range s {
-		if i > 0 && (n-i)%3 == 0 {
-			result = append(result, '.')
-		}
-		result = append(result, byte(c))
-	}
-	return string(result)
 }
