@@ -132,3 +132,48 @@ func TestDocuments_ReviewSummaryCountsEveryDocumentOfTheParticipant(t *testing.T
 		t.Errorf("summary.disetujui = %d, ingin 5", envelope.Summary.Disetujui)
 	}
 }
+
+// The queue's "N of M approved" badge describes the participant, so it has to be
+// right on the default view too — where no participant filter is set and the
+// status filter hides most of their documents. It used to be counted from the
+// rows on screen: someone two of three documents through read "0 of 1".
+func TestDocumentQueue_ProgressDescribesTheParticipantNotThePage(t *testing.T) {
+	h := newHarness(t)
+	h.seedBaseline()
+
+	// Three documents, two approved. The default queue shows only the pending one.
+	for i, status := range []string{"disetujui", "disetujui", "menunggu"} {
+		h.Documents.Seed(domainDocument.Document{
+			ID:            fmt.Sprintf("document-progress-%d", i),
+			ParticipantID: "participant-1",
+			DocumentType:  []string{"passport", "ktp", "rekening_koran"}[i],
+			FilePath:      "participant-1/berkas.jpg",
+			FileName:      "berkas.jpg",
+			Status:        status,
+		})
+	}
+
+	res := h.as("admin").GET("/api/v1/admin/documents?status=menunggu")
+	res.expectCode(http.StatusOK)
+
+	var payload struct {
+		Data      []map[string]any `json:"data"`
+		Summaries map[string]struct {
+			Total     int `json:"total"`
+			Disetujui int `json:"disetujui"`
+		} `json:"summaries"`
+	}
+	res.decode(&payload)
+
+	if len(payload.Data) != 1 {
+		t.Fatalf("queue shows %d rows, want only the pending document", len(payload.Data))
+	}
+	got, ok := payload.Summaries["participant-1"]
+	if !ok {
+		t.Fatal("no summary for the participant on the page — the badge would count the rows instead")
+	}
+	if got.Total != 3 || got.Disetujui != 2 {
+		t.Errorf("summary = %d of %d approved, want 2 of 3 — the figure describes the participant, not the page",
+			got.Disetujui, got.Total)
+	}
+}

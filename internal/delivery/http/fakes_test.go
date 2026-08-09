@@ -1350,6 +1350,29 @@ func (r *fakeDocumentRepo) ListByParticipant(_ context.Context, participantID st
 	return out, nil
 }
 
+// SummaryByParticipants counts every document each participant has, ignoring the
+// filter the caller is looking through — the same contract the SQL aggregate has.
+func (r *fakeDocumentRepo) SummaryByParticipants(_ context.Context, participantIDs []string) (map[string]document.StatusSummary, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	wanted := make(map[string]bool, len(participantIDs))
+	for _, id := range participantIDs {
+		wanted[id] = true
+	}
+	out := map[string]document.StatusSummary{}
+	for _, id := range r.order {
+		d := r.documents[id]
+		if d == nil || !wanted[d.ParticipantID] {
+			continue
+		}
+		summary := out[d.ParticipantID]
+		summary.Add(d.Status)
+		out[d.ParticipantID] = summary
+	}
+	return out, nil
+}
+
 func (r *fakeDocumentRepo) Review(_ context.Context, id, status, reviewedBy, rejectionReason string) error {
 	if r.err != nil {
 		return r.err

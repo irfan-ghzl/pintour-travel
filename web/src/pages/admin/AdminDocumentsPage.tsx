@@ -36,7 +36,7 @@ export default function AdminDocumentsPage() {
   const { data: docsPage, isLoading } = useQuery({
     queryKey: ['documents', statusFilter, participantID, page],
     queryFn: () =>
-      api.get<PaginatedResponse<Document> & { summary?: DocumentSummary }>(
+      api.get<PaginatedResponse<Document> & { summaries?: Record<string, DocumentSummary> }>(
         `/admin/documents?${params}`,
       ).then(r => r.data),
   })
@@ -62,28 +62,12 @@ export default function AdminDocumentsPage() {
 
   // Per-participant progress: "X dari Y dokumen disetujui" (§5.3).
   //
-  // When one participant is being reviewed the server supplies the counts, over
-  // ALL their documents — counting the rows on screen made the figure agree with
-  // the active filter and with nothing else ("2 of 2 approved" while filtering
-  // to approved). Without a participant filter there is no such summary, so the
-  // page falls back to counting what it has and the figure is per-page by
-  // construction.
-  const progress = useMemo(() => {
-    const by: Record<string, { approved: number; total: number }> = {}
-    for (const d of docsData ?? []) {
-      const key = d.participant_name || d.participant_id
-      by[key] ??= { approved: 0, total: 0 }
-      by[key].total++
-      if (d.status === 'disetujui') by[key].approved++
-    }
-    const summary = docsPage?.summary
-    if (participantID && summary) {
-      for (const key of Object.keys(by)) {
-        by[key] = { approved: summary.disetujui, total: summary.total }
-      }
-    }
-    return by
-  }, [docsData, docsPage?.summary, participantID])
+  // The server counts this, over ALL of a participant's documents, for every
+  // participant on the page. Counting the rows on screen instead made the figure
+  // agree with the active filter and with nothing else — someone two of three
+  // documents through read "0 of 1" while the page was filtered to the one still
+  // pending.
+  const progress = docsPage?.summaries ?? {}
 
   return (
     <div className="space-y-4">
@@ -135,8 +119,7 @@ export default function AdminDocumentsPage() {
       ) : (
         <div className="bg-white rounded-xl border divide-y">
           {docs.map((doc) => {
-            const key = doc.participant_name || doc.participant_id
-            const prog = progress[key]
+            const prog = progress[doc.participant_id]
             return (
               <div key={doc.id} className="px-4 py-3 flex items-center gap-3">
                 <div className="flex-1 min-w-0">
@@ -145,7 +128,7 @@ export default function AdminDocumentsPage() {
                     <span className="text-xs text-gray-400">·</span>
                     <span className="text-xs text-gray-600">{DOC_TYPE_LABELS[doc.document_type] ?? doc.document_type}</span>
                     {prog && (
-                      <span className="text-[11px] text-gray-400">({prog.approved}/{prog.total} disetujui)</span>
+                      <span className="text-[11px] text-gray-400">({prog.disetujui}/{prog.total} disetujui)</span>
                     )}
                   </div>
                   <p className="text-xs text-gray-500 truncate">{doc.file_name}</p>

@@ -8,6 +8,12 @@ type Repository interface {
 	// List returns one page of documents and the total matching the filter.
 	List(ctx context.Context, f Filter) ([]Document, int, error)
 	ListByParticipant(ctx context.Context, participantID string) ([]Document, error)
+	// SummaryByParticipants counts every document each named participant has, by
+	// status. The review queue shows "N of M approved" beside each row, and that
+	// figure describes the participant — not the page it is being read on, and
+	// not the status filter in front of it. One aggregate rather than a query per
+	// row, because the queue is paginated and the counts are not.
+	SummaryByParticipants(ctx context.Context, participantIDs []string) (map[string]StatusSummary, error)
 	Review(ctx context.Context, id, status, reviewedBy, rejectionReason string) error
 	Delete(ctx context.Context, id string) error
 }

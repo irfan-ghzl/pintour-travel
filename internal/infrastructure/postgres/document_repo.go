@@ -101,6 +101,42 @@ func (r *documentRepo) ListByParticipant(ctx context.Context, participantID stri
 	return scanDocuments(rows)
 }
 
+// SummaryByParticipants counts each participant's documents by status in one
+// aggregate.
+//
+// The review queue shows "N of M approved" beside every row. That figure
+// describes the participant, so it cannot be counted from the rows on screen —
+// those are one page of one status. Nor can it be a query per row: the queue is
+// paginated and would issue as many queries as the page is long, for a number
+// that does not depend on the page at all.
+func (r *documentRepo) SummaryByParticipants(ctx context.Context, participantIDs []string) (map[string]document.StatusSummary, error) {
+	out := map[string]document.StatusSummary{}
+	if len(participantIDs) == 0 {
+		return out, nil
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT participant_id, status, COUNT(*)
+		FROM documents
+		WHERE deleted_at IS NULL AND participant_id = ANY($1::uuid[])
+		GROUP BY participant_id, status`, participantIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id, status string
+		var n int
+		if err := rows.Scan(&id, &status, &n); err != nil {
+			return nil, err
+		}
+		summary := out[id]
+		summary.AddN(status, n)
+		out[id] = summary
+	}
+	return out, rows.Err()
+}
+
 func (r *documentRepo) Review(ctx context.Context, id, status, reviewedBy, rejectionReason string) error {
 	now := time.Now()
 	_, err := r.db.ExecContext(ctx, `

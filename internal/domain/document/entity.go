@@ -117,3 +117,34 @@ type OCRResult struct {
 	ValidationNotes  string          `json:"validation_notes"`
 	CreatedAt        time.Time       `json:"created_at"`
 }
+
+// StatusSummary is how far along one participant's paperwork is: every document
+// they have, grouped by status. It answers the reviewer's question — is this
+// person nearly done? — which the rows on any one page cannot.
+type StatusSummary struct {
+	Total     int `json:"total"`
+	Menunggu  int `json:"menunggu"`
+	Disetujui int `json:"disetujui"`
+	Ditolak   int `json:"ditolak"`
+}
+
+// Add counts one document towards the summary.
+func (s *StatusSummary) Add(status string) { s.AddN(status, 1) }
+
+// AddN counts n documents of one status, which is the shape an aggregate query
+// returns them in.
+func (s *StatusSummary) AddN(status string, n int) {
+	s.Total += n
+	switch status {
+	case StatusApproved:
+		s.Disetujui += n
+	case StatusRejected:
+		s.Ditolak += n
+	case StatusPending:
+		s.Menunggu += n
+	}
+}
+
+// Complete reports whether every document the participant has is approved —
+// and that they have at least one, since nobody with no documents is done.
+func (s StatusSummary) Complete() bool { return s.Total > 0 && s.Disetujui == s.Total }

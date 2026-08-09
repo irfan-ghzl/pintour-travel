@@ -92,35 +92,36 @@ func (h *DocumentHandler) ListAllDocuments(c echo.Context) error {
 	}
 
 	response := pageResponse(docs, total, f.Page, f.PerPage)
-	// The review page's "N of M approved" summary describes every document of
-	// the participant being reviewed, not the page or the status filter in front
-	// of it — counting the filtered rows made the figure agree with itself and
-	// with nothing else.
-	if f.ParticipantID != nil {
-		if summary, err := h.reviewSummary(ctx, *f.ParticipantID); err == nil {
-			response["summary"] = summary
+	// The review page shows "N of M approved" beside every row. That figure
+	// describes the participant, so it is served for every participant on the
+	// page — not only when the reviewer has narrowed to one.
+	//
+	// Serving it only in the narrowed case left the queue counting the rows in
+	// front of it, which agreed with the active filter and with nothing else: a
+	// participant with two of three documents approved read "0 of 1" while the
+	// page was filtered to the one still pending.
+	if summaries, err := h.reviewSummaries(ctx, docs); err == nil {
+		response["summaries"] = summaries
+		// Kept for the single-participant view, whose caller reads one summary.
+		if f.ParticipantID != nil {
+			response["summary"] = summaries[*f.ParticipantID]
 		}
 	}
 	return c.JSON(http.StatusOK, response)
 }
 
-// reviewSummary counts a participant's documents by outcome, ignoring whatever
-// filter the reviewer is looking through.
-func (h *DocumentHandler) reviewSummary(ctx context.Context, participantID string) (map[string]int, error) {
-	all, err := h.docs.ListByParticipant(ctx, participantID)
-	if err != nil {
-		return nil, err
+// reviewSummaries counts the documents of every participant appearing in docs,
+// whatever filter the reviewer is looking through.
+func (h *DocumentHandler) reviewSummaries(ctx context.Context, docs []document.Document) (map[string]document.StatusSummary, error) {
+	seen := make(map[string]bool, len(docs))
+	ids := make([]string, 0, len(docs))
+	for _, d := range docs {
+		if d.ParticipantID != "" && !seen[d.ParticipantID] {
+			seen[d.ParticipantID] = true
+			ids = append(ids, d.ParticipantID)
+		}
 	}
-	summary := map[string]int{
-		"total":                 len(all),
-		document.StatusApproved: 0,
-		document.StatusPending:  0,
-		document.StatusRejected: 0,
-	}
-	for _, d := range all {
-		summary[d.Status]++
-	}
-	return summary, nil
+	return h.docs.SummaryByParticipants(ctx, ids)
 }
 
 func (h *DocumentHandler) UploadDocument(c echo.Context) error {
