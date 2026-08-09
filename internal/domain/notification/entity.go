@@ -1,6 +1,9 @@
 package notification
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // WANotification is a log of a WhatsApp message sent by the system.
 type WANotification struct {
@@ -51,3 +54,30 @@ const (
 	TypeLeadsStale        = "LEADS_STALE"
 	TypeQuotaWarning      = "QUOTA_WARNING"
 )
+
+// PaymentReminderDays are the ages, in days since issue, at which FR-INV-05 asks
+// for an unpaid invoice to be chased.
+var PaymentReminderDays = []int{1, 3, 6}
+
+// PaymentReminderType names the template for the reminder sent at a given age.
+//
+// One place decides this because two need the answer and they must agree: the
+// sender writes the type onto the notification row, and the scheduler reads the
+// same type back to tell whether today's reminder already went out. When the
+// mapping lived in the sender and was keyed off the human-readable label, a
+// label the sender did not recognise silently produced a day-1 reminder.
+func PaymentReminderType(days int) string {
+	switch days {
+	case 3:
+		return TypePaymentReminder3
+	case 6:
+		return TypePaymentReminder6
+	default:
+		return TypePaymentReminder1
+	}
+}
+
+// PaymentReminderLabel renders the age the way the message says it out loud.
+func PaymentReminderLabel(days int) string {
+	return fmt.Sprintf("%d hari", days)
+}

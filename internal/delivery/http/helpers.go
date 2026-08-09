@@ -1,9 +1,13 @@
 package httpdelivery
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/irfan-ghzl/pintour-travel/internal/auth"
 	"github.com/labstack/echo/v4"
@@ -53,6 +57,58 @@ func serverErrEnvelope() map[string]interface{} {
 func serverErr(c echo.Context, err error) error {
 	c.Logger().Error(err)
 	return c.JSON(http.StatusInternalServerError, serverErrEnvelope())
+}
+
+// writeErr answers a failed write. A constraint the request itself violated is
+// the caller's mistake, not the server's: naming a package that does not exist
+// used to come back as 500, which reads in the log as a broken system and tells
+// the caller nothing about what to fix. Anything else still goes to serverErr,
+// so a genuine database failure keeps its status and its full log line.
+//
+// The class is read from the driver's SQLSTATE, never matched against the
+// message text — the text is Postgres's to change.
+func writeErr(c echo.Context, err error) error {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return serverErr(c, err)
+	}
+	switch pgErr.Code {
+	case "23503": // foreign_key_violation
+		c.Logger().Error(err)
+		return badRequest(c, fmt.Sprintf("%s tidak ditemukan", constraintField(pgErr)))
+	case "23505": // unique_violation
+		c.Logger().Error(err)
+		return c.JSON(http.StatusConflict, errResponse("CONFLICT",
+			fmt.Sprintf("%s sudah terpakai", constraintField(pgErr))))
+	case "23514": // check_violation
+		c.Logger().Error(err)
+		return badRequest(c, fmt.Sprintf("nilai %s tidak diizinkan", constraintField(pgErr)))
+	}
+	return serverErr(c, err)
+}
+
+// constraintField recovers the column a constraint guards from its name, which
+// Postgres builds as "<table>_<column>_<suffix>" — so "leads_package_id_fkey"
+// yields "package_id". A constraint named by hand may not follow the pattern; it
+// then falls back to its own name, which still points at what was violated.
+func constraintField(pgErr *pgconn.PgError) string {
+	if pgErr.ColumnName != "" {
+		return pgErr.ColumnName
+	}
+	name := pgErr.ConstraintName
+	if name == "" {
+		return "data"
+	}
+	for _, suffix := range []string{"_fkey", "_key", "_check"} {
+		if strings.HasSuffix(name, suffix) {
+			trimmed := strings.TrimSuffix(name, suffix)
+			if table := pgErr.TableName; table != "" && strings.HasPrefix(trimmed, table+"_") {
+				return strings.TrimPrefix(trimmed, table+"_")
+			}
+			return trimmed
+		}
+	}
+	return name
 }
 
 // requestTooLarge refuses a request whose body exceeds limit bytes (§ketahanan

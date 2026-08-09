@@ -31,7 +31,7 @@ func (r *documentRepo) GetByID(ctx context.Context, id string) (*document.Docume
 		COALESCE(p.name,'')
 		FROM documents d
 		LEFT JOIN participants p ON p.id=d.participant_id
-		WHERE d.id=$1`, id,
+		WHERE d.id=$1 AND d.deleted_at IS NULL`, id,
 	).Scan(&d.ID, &d.ParticipantID, &d.DocumentType, &d.FilePath, &d.FileName,
 		&d.Status, &d.RejectionReason, &d.ReviewedBy, &d.UploadedAt, &d.ReviewedAt,
 		&d.ParticipantName)

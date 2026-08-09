@@ -96,26 +96,26 @@ func (s *Scheduler) Stop() {
 // sendPaymentReminders sends WA to participants with unpaid invoices (H+1, H+3, H+6).
 func (s *Scheduler) sendPaymentReminders() {
 	ctx := context.Background()
-	reminders := []struct {
-		days     int
-		dayLabel string
-	}{
-		{1, "1 hari"},
-		{3, "3 hari"},
-		{6, "6 hari"},
-	}
-	for _, r := range reminders {
+	for _, days := range notification.PaymentReminderDays {
 		// Read the invoice, not just the participant. The old call passed an empty
 		// invoice number — so the message named no invoice, leaving a participant
 		// with two unpaid ones no way to tell which was meant — and passed the
 		// PARTICIPANT id as the reference while labelling it "invoice", which
 		// broke the trail from an invoice to the messages sent about it.
-		for _, due := range s.unpaidInvoiceReminders(ctx, r.days) {
-			if due.phone == "" {
+		due, err := s.unpaidInvoiceReminders(ctx, days)
+		if err != nil {
+			// Loud, and named as a failure. This query failed on every run for
+			// weeks while the job reported nothing: it logged and returned an
+			// empty list, which is indistinguishable from "no one is overdue".
+			log.Printf("sendPaymentReminders: TIDAK ADA pengingat H+%d yang terkirim — kueri gagal: %v", days, err)
+			continue
+		}
+		for _, d := range due {
+			if d.phone == "" {
 				continue
 			}
-			_ = s.fonnte.SendPaymentReminder(ctx, due.phone, due.name,
-				due.invoiceNumber, r.dayLabel, due.invoiceID)
+			_ = s.fonnte.SendPaymentReminder(ctx, d.phone, d.name,
+				d.invoiceNumber, days, d.invoiceID)
 			time.Sleep(time.Second) // §17.2 rate-limit Fonnte
 		}
 	}
@@ -132,9 +132,14 @@ type unpaidInvoiceReminder struct {
 // unpaidInvoiceReminders lists the unpaid invoices issued `days` days ago along
 // with who to tell, deduped against a reminder of the same kind already sent for
 // that invoice today — the same marker pattern the overdue and quota jobs use.
-func (s *Scheduler) unpaidInvoiceReminders(ctx context.Context, days int) []unpaidInvoiceReminder {
+//
+// The age is bound with make_interval rather than by pasting the number into a
+// string. `$1 || ' days'` forces Postgres to type the parameter as text, and the
+// driver refuses to encode an int as text — so the query failed before it was
+// ever sent, every day, for every one of the three reminders.
+func (s *Scheduler) unpaidInvoiceReminders(ctx context.Context, days int) ([]unpaidInvoiceReminder, error) {
 	if s.db == nil {
-		return nil
+		return nil, nil
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT i.id, i.invoice_number, p.name, COALESCE(p.phone,'')
@@ -142,11 +147,17 @@ func (s *Scheduler) unpaidInvoiceReminders(ctx context.Context, days int) []unpa
 		JOIN participants p ON p.id = i.participant_id
 		WHERE i.deleted_at IS NULL
 		  AND i.status IN ('diterbitkan','menunggu_bayar')
-		  AND i.created_at::date = (NOW() - ($1 || ' days')::interval)::date
-		ORDER BY i.created_at`, days)
+		  AND i.created_at::date = (NOW() - make_interval(days => $1))::date
+		  AND NOT EXISTS (
+		    SELECT 1 FROM wa_notifications w
+		    WHERE w.reference_id = i.id
+		      AND w.reference_type = 'invoice'
+		      AND w.message_type = $2
+		      AND w.created_at::date = CURRENT_DATE
+		  )
+		ORDER BY i.created_at`, days, notification.PaymentReminderType(days))
 	if err != nil {
-		log.Printf("sendPaymentReminders query (H+%d): %v", days, err)
-		return nil
+		return nil, fmt.Errorf("kueri pengingat H+%d: %w", days, err)
 	}
 	defer rows.Close()
 
@@ -154,11 +165,11 @@ func (s *Scheduler) unpaidInvoiceReminders(ctx context.Context, days int) []unpa
 	for rows.Next() {
 		var r unpaidInvoiceReminder
 		if err := rows.Scan(&r.invoiceID, &r.invoiceNumber, &r.name, &r.phone); err != nil {
-			continue
+			return nil, fmt.Errorf("baca baris pengingat H+%d: %w", days, err)
 		}
 		out = append(out, r)
 	}
-	return out
+	return out, rows.Err()
 }
 
 // sendDepartureReminders sends WA blasts at H-30/H-14/H-7/H-1.

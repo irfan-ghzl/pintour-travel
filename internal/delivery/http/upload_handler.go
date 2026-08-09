@@ -130,6 +130,15 @@ func (h *UploadHandler) resolveRequestedFile(c echo.Context) (privateFile, error
 // handlers deliberately: a caller who may not read the file gets the same 404
 // whether or not this deployment has storage keys.
 func (h *UploadHandler) signPrivateFile(c echo.Context, file privateFile) error {
+	// A path recorded as an absolute URL is already reachable and has no bucket
+	// object behind it — that is the manual-URL fallback a deployment without
+	// storage keys writes, and what the seed data contains. Signing it produced a
+	// request for ".../object/sign/<bucket>/https://example.com/..." and a 500 on
+	// the one path the caller was entitled to. The client already understood this
+	// shape; the server, which took over the decision, did not.
+	if isAbsoluteURL(file.Path) {
+		return c.JSON(http.StatusOK, ok(map[string]string{"url": file.Path}))
+	}
 	if !h.storage.Enabled() {
 		return c.JSON(http.StatusServiceUnavailable,
 			errResponse("STORAGE_UNAVAILABLE", "Storage tidak terkonfigurasi"))

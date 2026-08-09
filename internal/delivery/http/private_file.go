@@ -107,6 +107,14 @@ func (r privateFileResolver) resolve(ctx context.Context, kind, id string) (priv
 	return file, nil
 }
 
+// isAbsoluteURL reports whether a stored file path is already a reachable
+// address rather than an object inside a bucket. Deployments without storage
+// keys record one of these instead of uploading, so both the ownership check and
+// the signer have to recognise the shape — and must agree on it.
+func isAbsoluteURL(path string) bool {
+	return strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://")
+}
+
 // pathBelongsToParticipant reports whether objectPath is one participantID could
 // have produced: StorageService.Upload files every object under the owner's id,
 // so that prefix is what "my file" means in the bucket.
@@ -128,7 +136,7 @@ func pathBelongsToParticipant(objectPath, participantID string) bool {
 	// verbatim when someone clicks through to the file, so a participant can
 	// still point a reviewer at a site of their choosing. Narrowing that is a
 	// change to the fallback flow itself, raised separately.
-	if strings.HasPrefix(objectPath, "http://") || strings.HasPrefix(objectPath, "https://") {
+	if isAbsoluteURL(objectPath) {
 		return true
 	}
 

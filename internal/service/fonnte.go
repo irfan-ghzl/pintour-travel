@@ -200,21 +200,18 @@ func (s *FonnteService) SendInvoice(ctx context.Context, phone, name, invoiceNum
 	return s.Send(ctx, phone, name, notification.TypeInvoiceSent, msg, &invoiceID, &refType)
 }
 
-func (s *FonnteService) SendPaymentReminder(ctx context.Context, phone, name, invoiceNumber, dayLabel, invoiceID string) error {
+// SendPaymentReminder chases one unpaid invoice. days is the invoice's age, and
+// decides both how the message reads and which template it is logged as — taking
+// the age rather than a rendered label keeps those two from disagreeing, which
+// is how the day-6 reminder came to be recorded as a day-1 one.
+func (s *FonnteService) SendPaymentReminder(ctx context.Context, phone, name, invoiceNumber string, days int, invoiceID string) error {
 	msg := fmt.Sprintf(
 		"⚠️ *Pengingat Pembayaran*\n\n"+
 			"Halo *%s*, invoice *%s* Anda belum dibayar (%s sejak diterbitkan).\n\n"+
 			"Segera lakukan pembayaran agar proses perjalanan Anda dapat berjalan lancar.\n\n"+
-			"Hubungi kami jika ada pertanyaan.", name, invoiceNumber, dayLabel)
-	msgType := notification.TypePaymentReminder1
-	switch dayLabel {
-	case "3 hari":
-		msgType = notification.TypePaymentReminder3
-	case "6 hari":
-		msgType = notification.TypePaymentReminder6
-	}
+			"Hubungi kami jika ada pertanyaan.", name, invoiceNumber, notification.PaymentReminderLabel(days))
 	refType := "invoice"
-	return s.Send(ctx, phone, name, msgType, msg, &invoiceID, &refType)
+	return s.Send(ctx, phone, name, notification.PaymentReminderType(days), msg, &invoiceID, &refType)
 }
 
 func (s *FonnteService) SendDocRequest(ctx context.Context, phone, name, packageName, portalLink, participantID string) error {

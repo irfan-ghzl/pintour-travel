@@ -46,8 +46,11 @@ func (h *LeadHandler) CreateLead(c echo.Context) error {
 	l.PortalUserID = nil
 	l.IsReturning = false
 
+	// This endpoint is public and only rate-limited, so a package_id that does not
+	// exist is ordinary traffic rather than a fault: it comes back as a 400 naming
+	// the field, not a 500.
 	if err := h.svc.CreateLead(c.Request().Context(), &l); err != nil {
-		return serverErr(c, err)
+		return writeErr(c, err)
 	}
 	return c.JSON(http.StatusCreated, ok(map[string]interface{}{
 		"id":      l.ID,

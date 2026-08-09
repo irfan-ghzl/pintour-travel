@@ -4,7 +4,7 @@
 
 .PHONY: help dev build test test-cover cover-report lint clean \
         docker-up docker-down docker-build docker-logs \
-        sqlc swag proto tidy seed-admin
+        sqlc swag proto tidy seed-admin migrate migrate-down
 
 # Default target
 help: ## Show this help
@@ -41,6 +41,12 @@ test: ## Run Go tests
 #              and the same code is counted twice under two numberings — the
 #              denominator inflates and the percentage drifts. Measured once
 #              without it here and it read 58,8% against a true 60,4%.
+
+migrate: ## Apply pending SQL migrations to DATABASE_URL (safe to re-run)
+	go run ./cmd/migrate
+
+migrate-down: ## Roll back the most recent migration (DISCARDS DATA — read its .down.sql first)
+	go run ./cmd/migrate -down
 
 test-cover: ## Measure backend coverage over every internal package (§21.10)
 	go test ./internal/... -count=1 -coverpkg=./internal/... -coverprofile=coverage.out

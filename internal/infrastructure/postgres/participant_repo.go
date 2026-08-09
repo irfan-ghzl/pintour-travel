@@ -52,7 +52,7 @@ func (r *participantRepo) GetByID(ctx context.Context, id string) (*participant.
 		FROM participants p
 		JOIN package_batches pb ON pb.id=p.batch_id
 		JOIN packages pkg ON pkg.id=pb.package_id
-		WHERE p.id=$1`, id,
+		WHERE p.id=$1 AND p.deleted_at IS NULL`, id,
 	).Scan(&pt.ID, &pt.LeadID, &pt.BatchID, &pt.Name, &pt.Phone, &pt.Email,
 		&pt.RoomType, &pt.PortalPassword, &pt.IsActive, &pt.BriefingViewed,
 		&pt.CreatedAt, &pt.UpdatedAt, &pt.BatchDepartureDate, &pt.PackageName)
@@ -69,7 +69,7 @@ func (r *participantRepo) GetByPhone(ctx context.Context, phone string) (*partic
 		FROM participants p
 		JOIN package_batches pb ON pb.id=p.batch_id
 		JOIN packages pkg ON pkg.id=pb.package_id
-		WHERE p.phone=$1`, phone,
+		WHERE p.phone=$1 AND p.deleted_at IS NULL`, phone,
 	).Scan(&pt.ID, &pt.LeadID, &pt.BatchID, &pt.Name, &pt.Phone, &pt.Email,
 		&pt.RoomType, &pt.PortalPassword, &pt.IsActive, &pt.BriefingViewed,
 		&pt.CreatedAt, &pt.UpdatedAt, &pt.BatchDepartureDate, &pt.PackageName)
@@ -106,7 +106,9 @@ func (r *participantRepo) ListByPortalUser(ctx context.Context, portalUserID, ph
 }
 
 func (r *participantRepo) List(ctx context.Context, f participant.Filter) ([]participant.Participant, int, error) {
-	where := "WHERE 1=1"
+	// Soft-deleted participants are gone as far as every listing is concerned —
+	// the same rule the lead, invoice, and document repositories already applied.
+	where := "WHERE p.deleted_at IS NULL"
 	// joinLeads is added only when scoping by consultant, so the common path keeps
 	// the original two-join query.
 	joinLeads := ""
@@ -198,7 +200,7 @@ func (r *participantRepo) ListByBatch(ctx context.Context, batchID string) ([]pa
 		FROM participants p
 		JOIN package_batches pb ON pb.id=p.batch_id
 		JOIN packages pkg ON pkg.id=pb.package_id
-		WHERE p.batch_id=$1 ORDER BY p.name`, batchID)
+		WHERE p.batch_id=$1 AND p.deleted_at IS NULL ORDER BY p.name`, batchID)
 	if err != nil {
 		return nil, err
 	}
@@ -223,6 +225,7 @@ func (r *participantRepo) ListByDepartureDaysAhead(ctx context.Context, days int
 		JOIN package_batches pb ON pb.id=p.batch_id
 		JOIN packages pkg ON pkg.id=pb.package_id
 		WHERE pb.departure_date = CURRENT_DATE + $1 AND p.is_active=true
+		  AND p.deleted_at IS NULL
 		ORDER BY p.name`, days)
 	if err != nil {
 		return nil, err
