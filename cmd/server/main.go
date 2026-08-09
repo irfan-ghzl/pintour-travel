@@ -21,6 +21,9 @@ import (
 	"syscall"
 	"time"
 
+	// Aliased: the local *sql.DB in main is called db, and the package holding
+	// the embedded migration files would otherwise shadow it.
+	migrationFiles "github.com/irfan-ghzl/pintour-travel/db"
 	invoicesvc "github.com/irfan-ghzl/pintour-travel/internal/application/invoice"
 	leadsvc "github.com/irfan-ghzl/pintour-travel/internal/application/lead"
 	pkgsvc "github.com/irfan-ghzl/pintour-travel/internal/application/package"
@@ -30,6 +33,7 @@ import (
 	"github.com/irfan-ghzl/pintour-travel/internal/config"
 	httpdelivery "github.com/irfan-ghzl/pintour-travel/internal/delivery/http"
 	"github.com/irfan-ghzl/pintour-travel/internal/infrastructure/postgres"
+	"github.com/irfan-ghzl/pintour-travel/internal/migrate"
 	"github.com/irfan-ghzl/pintour-travel/internal/scheduler"
 	"github.com/irfan-ghzl/pintour-travel/internal/service"
 
@@ -65,6 +69,23 @@ func main() {
 	}
 	defer db.Close()
 
+	// ── Migrations ────────────────────────────────────────────────────────────
+	// Applied here, not by the Postgres image's init directory, because that
+	// directory runs only when the data volume is created: a deployment that
+	// already holds data would otherwise keep an old schema while the code
+	// expects a new one, and every feature the missing migrations carry fails at
+	// runtime. Failing to migrate stops the process — serving on a schema the
+	// code does not match is worse than not serving.
+	migrateCtx, cancelMigrate := context.WithTimeout(context.Background(), 2*time.Minute)
+	ran, err := migrate.Run(migrateCtx, db, migrationFiles.Migrations())
+	cancelMigrate()
+	if err != nil {
+		log.Fatalf("migrations failed: %v", err)
+	}
+	for _, name := range ran {
+		log.Printf("migration applied: %s", name)
+	}
+
 	// ── Redis (optional) ──────────────────────────────────────────────────────
 	var redisClient *cache.Client
 	if cfg.Redis.Addr != "" {
@@ -95,6 +116,7 @@ func main() {
 	userRepo := postgres.NewUserRepo(db)
 	tourLeaderRepo := postgres.NewTourLeaderRepo(db)
 	chatbotRepo := postgres.NewChatbotRepo(db)
+	deletionRepo := postgres.NewDeletionRequestRepo(db) // §25.5 permintaan penghapusan data
 	// Runs the writes that only make sense together — currently lead conversion —
 	// as one transaction. It sits beside the repositories rather than replacing
 	// them: every single-row operation still goes through the ones above.
@@ -180,6 +202,7 @@ func main() {
 		Email:          emailSvc,
 		Storage:        storageSvc,
 		NotifRepo:      notifRepo,
+		Deletions:      deletionRepo,
 		DB:             db,
 		Midtrans:       midtransSvc,
 		Chatbot:        chatbotSvc,

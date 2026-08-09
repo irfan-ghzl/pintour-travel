@@ -34,6 +34,7 @@ import (
 	domainPkg "github.com/irfan-ghzl/pintour-travel/internal/domain/package"
 	domainParticipant "github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/portaluser"
+	"github.com/irfan-ghzl/pintour-travel/internal/domain/privacy"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/uow"
 	domainUser "github.com/irfan-ghzl/pintour-travel/internal/domain/user"
 )
@@ -1689,4 +1690,129 @@ func (r *fakeChatbotRepo) ListConversations(_ context.Context, f chatbot.Filter)
 		out = append(out, *byPhone[p])
 	}
 	return out, len(out), nil
+}
+
+// ─── privacy.Repository ───────────────────────────────────────────────────────
+
+// fakeDeletionRepo stores erasure requests and performs the anonymisation, so a
+// test can assert what happened to the participant rather than only that the
+// endpoint answered. It keeps the one-open-request-per-participant rule the
+// partial unique index enforces in Postgres: without it, a test could not tell
+// the difference between "recorded once" and "recorded every time asked".
+type fakeDeletionRepo struct {
+	fakeErr
+	requests     map[string]*privacy.DeletionRequest
+	order        []string
+	participants *fakeParticipantRepo
+	documents    *fakeDocumentRepo
+	seq          int
+}
+
+func newFakeDeletionRepo() *fakeDeletionRepo {
+	return &fakeDeletionRepo{requests: map[string]*privacy.DeletionRequest{}}
+}
+
+func (r *fakeDeletionRepo) Create(_ context.Context, req *privacy.DeletionRequest) error {
+	if r.err != nil {
+		return r.err
+	}
+	for _, id := range r.order {
+		if existing := r.requests[id]; existing.ParticipantID == req.ParticipantID &&
+			existing.Status == privacy.StatusPending {
+			*req = *existing
+			return nil
+		}
+	}
+	r.seq++
+	req.ID = fmt.Sprintf("deletion-%d", r.seq)
+	req.Status = privacy.StatusPending
+	req.RequestedAt = time.Now()
+	stored := *req
+	r.requests[req.ID] = &stored
+	r.order = append(r.order, req.ID)
+	return nil
+}
+
+func (r *fakeDeletionRepo) GetByID(_ context.Context, id string) (*privacy.DeletionRequest, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	req, ok := r.requests[id]
+	if !ok {
+		return nil, errNotFound
+	}
+	copied := *req
+	return &copied, nil
+}
+
+func (r *fakeDeletionRepo) List(_ context.Context, status string) ([]privacy.DeletionRequest, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	out := []privacy.DeletionRequest{}
+	for _, id := range r.order {
+		req := r.requests[id]
+		if status != "" && req.Status != status {
+			continue
+		}
+		out = append(out, *req)
+	}
+	return out, nil
+}
+
+func (r *fakeDeletionRepo) Anonymise(ctx context.Context, requestID, processedBy, notes string) error {
+	return r.close(ctx, requestID, processedBy, notes, privacy.StatusDone, true)
+}
+
+func (r *fakeDeletionRepo) Reject(ctx context.Context, requestID, processedBy, notes string) error {
+	return r.close(ctx, requestID, processedBy, notes, privacy.StatusRejected, false)
+}
+
+func (r *fakeDeletionRepo) close(_ context.Context, requestID, processedBy, notes, status string, erase bool) error {
+	if r.err != nil {
+		return r.err
+	}
+	req, ok := r.requests[requestID]
+	if !ok {
+		return errNotFound
+	}
+	if req.Status != privacy.StatusPending {
+		return privacy.ErrAlreadyProcessed
+	}
+	now := time.Now()
+	req.Status = status
+	req.Notes = notes
+	req.ProcessedAt = &now
+	if processedBy != "" {
+		by := processedBy
+		req.ProcessedBy = &by
+	}
+	if !erase {
+		return nil
+	}
+	if r.participants != nil {
+		if p, ok := r.participants.participants[req.ParticipantID]; ok {
+			p.Name = "Peserta Dihapus"
+			p.Phone = "deleted-" + req.ParticipantID
+			p.Email = ""
+			p.NIK = ""
+			p.PortalPassword = ""
+			p.IsActive = false
+		}
+	}
+	if r.documents != nil {
+		// Drop the id from the order slice as well: the Postgres repository
+		// filters deleted rows out of every read, so a fake that leaves the id
+		// listed would hand back a nil document and panic instead of failing.
+		kept := r.documents.order[:0]
+		for _, id := range r.documents.order {
+			if d := r.documents.documents[id]; d != nil && d.ParticipantID == req.ParticipantID {
+				delete(r.documents.documents, id)
+				continue
+			}
+			kept = append(kept, id)
+		}
+		r.documents.order = kept
+	}
+	return nil
 }

@@ -4,7 +4,12 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
+
+// EnvProduction is the APP_ENV value that turns on the production posture:
+// Secure cookies, and the configuration checks in Validate.
+const EnvProduction = "production"
 
 // defaultJWTSecret is the insecure development fallback. It must never be used
 // in production — Validate() enforces this.
@@ -144,12 +149,68 @@ func Load() *Config {
 // Validate checks for unsafe configuration. In production it refuses to run
 // with a missing or default JWT secret, which would allow token forgery.
 func (c *Config) Validate() error {
-	if c.Server.Env == "production" {
-		if c.JWT.Secret == "" || c.JWT.Secret == defaultJWTSecret {
-			return fmt.Errorf("JWT_SECRET must be set to a strong random value in production")
+	if c.Server.Env != EnvProduction {
+		return nil
+	}
+
+	// Every check below guards a failure that produces no error at runtime. A
+	// deployment misconfigured in any of these ways starts cleanly, serves
+	// requests, and logs nothing — while sending participants links that go
+	// nowhere or taking payments that never arrive. Refusing to start is the
+	// only signal left.
+	var problems []string
+
+	if c.JWT.Secret == "" || c.JWT.Secret == defaultJWTSecret {
+		problems = append(problems,
+			"JWT_SECRET masih kosong atau memakai nilai bawaan — token bisa dipalsukan siapa pun yang tahu nilai itu")
+	}
+
+	// These two are pasted into WhatsApp messages and password-reset emails. A
+	// localhost address in production is a link every recipient cannot open, and
+	// nothing about sending it fails.
+	for _, u := range []struct{ key, value string }{
+		{"PORTAL_BASE_URL", c.Server.PortalBaseURL},
+		{"APP_URL", c.Email.AppURL},
+	} {
+		if problem := checkPublicURL(u.key, u.value); problem != "" {
+			problems = append(problems, problem)
 		}
 	}
-	return nil
+
+	// A production deployment pointed at the payment sandbox accepts payments
+	// that never reach a bank account, and reports every one of them as settled.
+	// Leaving MIDTRANS_SERVER_KEY empty is a legitimate deployment — one that
+	// does not take online payments, and says so by failing the endpoint — but
+	// a real key against the sandbox is not.
+	if c.Midtrans.ServerKey != "" && c.Midtrans.Env != EnvProduction {
+		problems = append(problems, fmt.Sprintf(
+			"MIDTRANS_ENV=%q padahal MIDTRANS_SERVER_KEY terisi — pembayaran akan diproses di sandbox "+
+				"dan dilaporkan lunas tanpa uang masuk; set MIDTRANS_ENV=production, atau kosongkan "+
+				"server key bila deployment ini memang tidak menerima pembayaran online",
+			c.Midtrans.Env))
+	}
+
+	if len(problems) == 0 {
+		return nil
+	}
+	return fmt.Errorf("konfigurasi produksi tidak aman:\n  - %s", strings.Join(problems, "\n  - "))
+}
+
+// checkPublicURL reports why a URL cannot be handed to someone outside the
+// deployment, or "" when it can.
+func checkPublicURL(key, value string) string {
+	if value == "" {
+		return key + " kosong — tautan yang dikirim ke peserta akan menunjuk ke mana-mana"
+	}
+	for _, local := range []string{"localhost", "127.0.0.1", "0.0.0.0", "::1"} {
+		if strings.Contains(value, local) {
+			return fmt.Sprintf("%s=%q menunjuk ke mesin lokal — peserta yang menerimanya tidak bisa membukanya", key, value)
+		}
+	}
+	if !strings.HasPrefix(value, "http://") && !strings.HasPrefix(value, "https://") {
+		return fmt.Sprintf("%s=%q bukan URL absolut", key, value)
+	}
+	return ""
 }
 
 // Env returns the environment variable key, or fallback when it is unset or

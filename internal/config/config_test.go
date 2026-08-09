@@ -158,7 +158,11 @@ func TestValidate_RefusesTheDevelopmentSecretInProduction(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			cfg := &Config{}
+			// Start from a deployment that is otherwise fit for production, so
+			// the case under test is the secret and nothing else. Validate now
+			// checks the public URLs and the payment gateway too, and a bare
+			// Config trips those as well.
+			cfg := productionConfig()
 			cfg.Server.Env = tc.env
 			cfg.JWT.Secret = tc.secret
 
@@ -173,5 +177,138 @@ func TestValidate_RefusesTheDevelopmentSecretInProduction(t *testing.T) {
 				t.Errorf("pesan %q tidak menyebut JWT_SECRET", err)
 			}
 		})
+	}
+}
+
+// ─── Production configuration ─────────────────────────────────────────────────
+
+// Every case here is a deployment that would start cleanly and fail silently:
+// tokens anyone can forge, links nobody can open, payments that never arrive.
+// Refusing to start is the only signal a misconfigured deployment gets, so what
+// is under test is that it refuses.
+
+// productionConfig is a deployment configured correctly, which each case then
+// breaks in exactly one way.
+func productionConfig() *Config {
+	c := &Config{}
+	c.Server.Env = EnvProduction
+	c.Server.PortalBaseURL = "https://portal.pintour.id"
+	c.JWT.Secret = "b8f1c0a94d2e47f6a1b3c5d7e9f0a2b4c6d8e0f2a4b6c8d0e2f4a6b8c0d2e4f6"
+	c.Email.AppURL = "https://admin.pintour.id"
+	return c
+}
+
+func TestValidate_AcceptsAProperProductionConfig(t *testing.T) {
+	if err := productionConfig().Validate(); err != nil {
+		t.Errorf("a correctly configured production deployment was refused: %v", err)
+	}
+}
+
+// Development keeps its defaults: localhost URLs and the shared secret are what
+// running the project locally means.
+func TestValidate_LeavesDevelopmentAlone(t *testing.T) {
+	c := &Config{}
+	c.Server.Env = "development"
+	c.Server.PortalBaseURL = "http://localhost:3000"
+	c.JWT.Secret = defaultJWTSecret
+	c.Midtrans.ServerKey = "SB-Mid-server-xxx"
+	c.Midtrans.Env = "sandbox"
+
+	if err := c.Validate(); err != nil {
+		t.Errorf("development was refused: %v", err)
+	}
+}
+
+func TestValidate_RefusesUnsafeProductionValues(t *testing.T) {
+	cases := []struct {
+		name    string
+		break_  func(*Config)
+		mustSay string
+	}{
+		{
+			name:    "secret bawaan",
+			break_:  func(c *Config) { c.JWT.Secret = defaultJWTSecret },
+			mustSay: "JWT_SECRET",
+		},
+		{
+			name:    "secret kosong",
+			break_:  func(c *Config) { c.JWT.Secret = "" },
+			mustSay: "JWT_SECRET",
+		},
+		{
+			name:    "portal menunjuk localhost",
+			break_:  func(c *Config) { c.Server.PortalBaseURL = "http://localhost:3000" },
+			mustSay: "PORTAL_BASE_URL",
+		},
+		{
+			name:    "portal menunjuk 127.0.0.1",
+			break_:  func(c *Config) { c.Server.PortalBaseURL = "http://127.0.0.1:3000" },
+			mustSay: "PORTAL_BASE_URL",
+		},
+		{
+			name:    "app url kosong",
+			break_:  func(c *Config) { c.Email.AppURL = "" },
+			mustSay: "APP_URL",
+		},
+		{
+			name:    "app url bukan URL absolut",
+			break_:  func(c *Config) { c.Email.AppURL = "admin.pintour.id" },
+			mustSay: "APP_URL",
+		},
+		{
+			name: "gateway sungguhan diarahkan ke sandbox",
+			break_: func(c *Config) {
+				c.Midtrans.ServerKey = "Mid-server-real"
+				c.Midtrans.Env = "sandbox"
+			},
+			mustSay: "MIDTRANS_ENV",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := productionConfig()
+			tc.break_(c)
+
+			err := c.Validate()
+			if err == nil {
+				t.Fatal("production started with a configuration that fails silently")
+			}
+			if !strings.Contains(err.Error(), tc.mustSay) {
+				t.Errorf("error = %q, want it to name %s so the operator knows what to change",
+					err, tc.mustSay)
+			}
+		})
+	}
+}
+
+// A deployment that does not take online payments says so by leaving the key
+// empty; the sandbox setting is then irrelevant and must not block a start.
+func TestValidate_AllowsProductionWithoutAPaymentGateway(t *testing.T) {
+	c := productionConfig()
+	c.Midtrans.ServerKey = ""
+	c.Midtrans.Env = "sandbox"
+
+	if err := c.Validate(); err != nil {
+		t.Errorf("production without a payment gateway was refused: %v", err)
+	}
+}
+
+// Several mistakes at once are reported together. An operator fixing a
+// misconfigured deployment should not have to restart it once per problem.
+func TestValidate_ReportsEveryProblemAtOnce(t *testing.T) {
+	c := productionConfig()
+	c.JWT.Secret = defaultJWTSecret
+	c.Server.PortalBaseURL = "http://localhost:3000"
+	c.Email.AppURL = ""
+
+	err := c.Validate()
+	if err == nil {
+		t.Fatal("expected a refusal")
+	}
+	for _, want := range []string{"JWT_SECRET", "PORTAL_BASE_URL", "APP_URL"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not mention %s: %v", want, err)
+		}
 	}
 }

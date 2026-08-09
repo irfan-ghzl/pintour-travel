@@ -114,6 +114,7 @@ type harness struct {
 	CountryReqs   *fakeCountryReqRepo
 	Airport       *fakeAirportRepo
 	Notifications *fakeNotifRepo
+	Deletions     *fakeDeletionRepo
 	Chatbot       *fakeChatbotRepo
 	GatewayOrders *fakeGatewayOrderRepo
 
@@ -209,7 +210,12 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 		Notifications: newFakeNotifRepo(),
 		Chatbot:       newFakeChatbotRepo(),
 		GatewayOrders: newFakeGatewayOrderRepo(),
+		Deletions:     newFakeDeletionRepo(),
 	}
+	// The erasure repository carries out the anonymisation, so it needs the two
+	// fakes holding what gets anonymised.
+	h.Deletions.participants = h.Participants
+	h.Deletions.documents = h.Documents
 	h.Unit = &fakeUnitOfWork{
 		participants: h.Participants, leads: h.Leads, portalUsers: h.PortalUsers,
 		invoices: h.Invoices, proofs: h.Proofs, gatewayOrders: h.GatewayOrders,
@@ -275,6 +281,7 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 		Email:          email,
 		Storage:        storage,
 		NotifRepo:      h.Notifications,
+		Deletions:      h.Deletions,
 		DB:             db,
 		Midtrans:       midtrans,
 		Chatbot:        chatbot,

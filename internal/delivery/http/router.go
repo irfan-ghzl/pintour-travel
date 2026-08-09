@@ -17,6 +17,7 @@ import (
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/document"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/notification"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
+	"github.com/irfan-ghzl/pintour-travel/internal/domain/privacy"
 	domainUser "github.com/irfan-ghzl/pintour-travel/internal/domain/user"
 	"github.com/irfan-ghzl/pintour-travel/internal/safe"
 	"github.com/irfan-ghzl/pintour-travel/internal/service"
@@ -37,14 +38,17 @@ type Services struct {
 	Participants   participant.Repository
 	Document       document.Repository
 	// TODO(ocr-v2.0-F3): re-enable when GCP Vision billing active
-	OCRRepo      document.OCRResultRepository
-	OCR          *service.OCRService
-	CountryReq   document.CountryRequirementRepository
-	PDF          *service.PDFService
-	Fonnte       *service.FonnteService
-	Email        *service.EmailService
-	Storage      *service.StorageService
-	NotifRepo    notification.Repository
+	OCRRepo    document.OCRResultRepository
+	OCR        *service.OCRService
+	CountryReq document.CountryRequirementRepository
+	PDF        *service.PDFService
+	Fonnte     *service.FonnteService
+	Email      *service.EmailService
+	Storage    *service.StorageService
+	NotifRepo  notification.Repository
+	// Deletions stores the §25.5 erasure requests the portal accepts and the
+	// admin queue works through.
+	Deletions    privacy.Repository
 	DB           *sql.DB
 	Midtrans     *service.MidtransService
 	Chatbot      *service.ChatbotService
@@ -84,12 +88,13 @@ func RegisterRoutes(e *echo.Echo, svc Services) {
 	airH := NewAirportHandler(svc.Airport, svc.Participants, svc.Package, svc.TourLeaderRepo, svc.Fonnte, svc.PDF)
 	docH := NewDocumentHandler(svc.Document, svc.CountryReq, svc.Participants, svc.Airport, svc.Fonnte, svc.Email, svc.OCR, svc.OCRRepo)
 	tlH := NewTourLeaderHandler(svc.TourLeaderRepo)
-	portalH := NewPortalHandler(svc.Participant, svc.Invoice, svc.Package, svc.Document, svc.CountryReq, svc.TourLeaderRepo, svc.UserRepo, svc.PDF, svc.Email, svc.OCR, svc.JWTSecret)
+	portalH := NewPortalHandler(svc.Participant, svc.Invoice, svc.Package, svc.Document, svc.CountryReq, svc.TourLeaderRepo, svc.UserRepo, svc.PDF, svc.Email, svc.OCR, svc.Deletions, svc.JWTSecret)
 	uploadH := NewUploadHandler(svc.Storage, svc.Document, svc.Invoice, svc.Participant)
 	dashH := NewDashboardHandler(svc.DB)
 	reportH := NewReportHandler(svc.DB)
 	webhookH := NewWebhookHandler(svc.Midtrans, svc.Invoice)
 	chatbotH := NewChatbotHandler(svc.Chatbot, svc.ChatbotRepo, svc.Lead, svc.ChatbotToken)
+	privacyH := NewPrivacyHandler(svc.Deletions)
 
 	api := e.Group("/api/v1")
 
@@ -128,7 +133,10 @@ func RegisterRoutes(e *echo.Echo, svc Services) {
 	portal.GET("/consultation-prefill", portalH.PortalConsultationPrefill)            // FR-PORTAL-12
 	portal.PUT("/profile", portalH.PortalUpdateProfile)                               // §15.4 portal-profile
 	portal.GET("/my-data", portalH.PortalMyData)                                      // §25.5 Right to Access
-	portal.POST("/account-deletion-request", portalH.PortalRequestDeletion)           // §25.5 Right to Erasure
+	// §25.5 Right to Erasure. The PRD writes this as DELETE and the portal client
+	// sends POST; both reach the same handler rather than one of them being wrong.
+	portal.POST("/account-deletion-request", portalH.PortalRequestDeletion)
+	portal.DELETE("/account-deletion-request", portalH.PortalRequestDeletion)
 	portal.GET("/invoices", portalH.PortalInvoices)
 	portal.GET("/invoices/:id/pdf", portalH.PortalInvoicePDF)
 	portal.POST("/invoices/:id/proofs", portalH.PortalUploadProof)
@@ -178,6 +186,11 @@ func RegisterRoutes(e *echo.Echo, svc Services) {
 	// row proposed to make the matrix cover it.
 	ops.GET("/signed-url", uploadH.SignedURLForStaff)
 	ops.GET("/reports/export", reportH.Export) // prompt §4.1/§4.2
+
+	// Erasure queue (§25.5). Ops-only: it exposes who asked to be forgotten and
+	// carries out the anonymisation.
+	ops.GET("/privacy/deletion-requests", privacyH.ListDeletionRequests)
+	ops.POST("/privacy/deletion-requests/:id/process", privacyH.ProcessDeletionRequest)
 
 	// Chatbot logs (v2.0 F2)
 	ops.GET("/chatbot-logs", chatbotH.ListConversations)

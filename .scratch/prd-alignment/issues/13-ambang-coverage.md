@@ -8,9 +8,9 @@
 
 **Blocked by:** 02, 03, 04, 05, 06, 07, 08, 09, 10, 11, 12 — seluruh tiket perbaikan
 
-**Status:** blocked — butuh Postgres yang berjalan untuk butir pertama
+**Status:** done
 
-- [ ] **Coverage backend menyeluruh mencapai sekurang-kurangnya ambang §21.10, diukur atas seluruh paket internal — bukan hanya paket yang kebetulan punya berkas test** → **belum: 58,8%.** Diukur dengan cara yang diminta (seluruh paket internal masuk penyebut). Terhalang, alasannya di bawah
+- [x] **Coverage backend menyeluruh mencapai sekurang-kurangnya ambang §21.10, diukur atas seluruh paket internal — bukan hanya paket yang kebetulan punya berkas test** → **72,8%**, ambang terlampaui
 - [x] Perintah pengukurannya didokumentasikan sehingga penguji dapat memverifikasi angkanya sendiri
 - [x] Tidak ada paket yang berisi logika keputusan bisnis tanpa satu pun test
 - [x] Celah yang tersisa ditutup lewat seam HTTP terlebih dahulu; seam fungsi murni hanya untuk logika yang memang murni
@@ -30,7 +30,8 @@ dicatat.
 |---|---|
 | Saat spec ditulis | 12,6% |
 | Sebelum tiket 11–14 | 43,3% |
-| **Sekarang** | **58,8%** |
+| Setelah tiket 15–17 | 64,6% |
+| **Sekarang** | **72,8%** |
 | Ambang | 70% |
 
 Perintah ukurnya masuk `Makefile` sebagai `make test-cover` dan
@@ -129,3 +130,61 @@ Dicatat belum terpenuhi, bukan dibiarkan tampak selesai: **uji performa**
 (<500ms untuk 95% permintaan — menuntut perkakas beban tersendiri terhadap
 deployment berjalan), **UAT**, dan **skor SUS** (keduanya melibatkan responden
 manusia).
+
+
+---
+
+## Penutupan (2026-08-10)
+
+Ambang terlampaui: **72,8%**. Yang membukanya adalah seam kedua yang spec sebut
+dan sesi sebelumnya tidak bisa pakai — Postgres akhirnya tersedia.
+
+| | |
+|---|---|
+| Saat spec ditulis | 12,6% |
+| Sebelum tiket 11–14 | 43,3% |
+| Setelah tiket 15–17 | 64,6% |
+| **Sekarang** | **72,8%** |
+| Ambang §21.10 | 70% |
+
+`internal/infrastructure/postgres` naik dari 0% ke 81,2% lewat dua berkas: test
+kontrak untuk jaminan skema yang tiket 06–09 tambahkan, dan test round-trip untuk
+setiap repository. Keduanya berjalan atas basis data scratch yang dibuat dan
+dihapus per test, dan dilewati dengan penanda bila `TEST_DATABASE_URL` kosong —
+mesin tanpa Postgres tetap dapat suite hijau.
+
+Datanya sengaja banyak dan sengaja beragam: 300 leads/participants/invoices per
+fixture, dengan setiap status, baris terhapus lunak di antara yang hidup, dan
+nomor telepon yang dipakai dua peserta. Volume saja tidak membuktikan apa pun —
+bentuknya yang membuktikan. Tiga cacat yang ditemukan semuanya tidak terlihat
+pada delapan baris data seed.
+
+### Empat cacat yang ditemukan test ini
+
+1. **`participantRepo` tidak menyaring hapus lunak** pada `List`, `ListByBatch`,
+   `ListByDepartureDaysAhead`, `GetByID`, dan `GetByPhone` — satu-satunya
+   repository yang tertinggal setelah tiket 06 memperbaiki invoice. Peserta yang
+   dihapus tetap muncul di daftar admin, tetap ikut di-init checklist bandara,
+   dan **tetap menerima WhatsApp pengingat keberangkatan** — masalah kepatuhan
+   §25.5, bukan cuma angka salah.
+2. **`documentRepo.GetByID` tidak menyaring hapus lunak.** Penanda tangan URL
+   privat lewat method ini, jadi dokumen yang sudah dihapus masih bisa
+   ditandatangani dan diunduh.
+3. **`packageRepo` hanya menjaga satu dari tiga kolom JSON.** `itinerary` dan
+   `requirements` sama-sama `NOT NULL DEFAULT '[]'` tapi ikut disebut di
+   statement, jadi nil mendarat sebagai NULL. Membuat paket sebelum itinerary-nya
+   ditulis — yang CMS izinkan — gagal dengan galat constraint.
+4. **`gatewayOrderRepo.ClaimNotification` di bawah delapan pemanggil serentak**
+   diverifikasi memang hanya satu yang menang. Ini bukan cacat; ini jaminan
+   idempotensi tiket 07 yang sebelumnya hanya terbukti berurutan.
+
+### Yang masih di bawah
+
+`internal/scheduler` 4,8% dan `internal/cache` 0%. Keduanya di luar cakupan tiket
+ini sekarang karena ambangnya sudah terlampaui tanpa mereka; kalau ingin dinaikkan,
+job automasi §2 dapat diuji dengan pola scratch-database yang sama.
+
+### Butir §21.10 lain
+
+Tetap belum terpenuhi dan tetap dicatat apa adanya: uji performa (<500ms untuk 95%
+permintaan), UAT 5 responden, dan skor SUS.

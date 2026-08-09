@@ -3,6 +3,7 @@ package httpdelivery
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/document"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/invoice"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
+	"github.com/irfan-ghzl/pintour-travel/internal/domain/privacy"
 	domainUser "github.com/irfan-ghzl/pintour-travel/internal/domain/user"
 	"github.com/irfan-ghzl/pintour-travel/internal/format"
 	"github.com/irfan-ghzl/pintour-travel/internal/safe"
@@ -35,6 +37,7 @@ type PortalHandler struct {
 	email        *service.EmailService
 	// TODO(ocr-v2.0-F3): re-enable when GCP Vision billing active
 	ocr       *service.OCRService
+	deletions privacy.Repository
 	jwtSecret string
 }
 
@@ -49,6 +52,7 @@ func NewPortalHandler(
 	pdf *service.PDFService,
 	email *service.EmailService,
 	ocr *service.OCRService,
+	deletions privacy.Repository,
 	jwtSecret string,
 ) *PortalHandler {
 	return &PortalHandler{
@@ -62,6 +66,7 @@ func NewPortalHandler(
 		pdf:          pdf,
 		email:        email,
 		ocr:          ocr,
+		deletions:    deletions,
 		jwtSecret:    jwtSecret,
 	}
 }
@@ -629,20 +634,40 @@ func (h *PortalHandler) PortalMyData(c echo.Context) error {
 }
 
 // PortalRequestDeletion submits an account deletion request (§25.5 Right to Erasure).
+//
+// The answer this gives is a legal commitment — 14 working days under UU PDP
+// Pasal 46 — so it may only be given once the request is somewhere an admin will
+// find it. It used to be given after storing nothing at all: the participant was
+// told their data would be erased, and no one ever learned they had asked.
+//
+// Asking twice returns the request already open rather than filing a second one.
+// Pressing the button again is what someone does when they are not sure the
+// first press worked; it should not put the same person in the queue twice.
 func (h *PortalHandler) PortalRequestDeletion(c echo.Context) error {
 	pid := portalParticipantID(c)
 	var body struct {
-		Reason string `json:"reason"`
+		Reason string `json:"reason" validate:"omitempty,max=1000"`
 	}
-	_ = bindJSON(c, &body)
+	// The reason is optional, and the PRD spells this endpoint as DELETE — which
+	// carries no body at all. An absent body is therefore a valid request, not a
+	// malformed one; anything present still has to parse and validate.
+	if err := bindJSON(c, &body); err != nil && !errors.Is(err, io.EOF) {
+		return invalidPayload(c, err, "format tidak valid")
+	}
+	if h.deletions == nil {
+		return serverErr(c, errDeletionsUnavailable)
+	}
 
-	// In a production system, this would create a deletion request record.
-	// For now, we log it and return a confirmation.
-	_ = pid
-	return c.JSON(http.StatusOK, ok(map[string]string{
+	req := &privacy.DeletionRequest{ParticipantID: pid, Reason: body.Reason}
+	if err := h.deletions.Create(c.Request().Context(), req); err != nil {
+		return serverErr(c, err)
+	}
+	return c.JSON(http.StatusOK, ok(map[string]any{
 		"message": "Permintaan penghapusan data Anda telah diterima. " +
 			"Tim Pintour akan memproses dalam 14 hari kerja sesuai UU PDP Pasal 46.",
-		"ticket": "DEL-" + c.Response().Header().Get("X-Request-Id"),
+		"ticket":       "DEL-" + req.ID,
+		"status":       req.Status,
+		"requested_at": req.RequestedAt,
 	}))
 }
 
@@ -821,3 +846,8 @@ func normalizePhone(phone string) string {
 	}
 	return phone
 }
+
+// errDeletionsUnavailable means the erasure store was not wired in. It is a
+// server fault, never the caller's: answering "diterima" without one is the
+// defect this endpoint was built to remove.
+var errDeletionsUnavailable = errors.New("deletion request repository not configured")
