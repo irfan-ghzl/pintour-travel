@@ -1,0 +1,52 @@
+# Overlay produksi. Dipakai bersama berkas dasar, oleh pipeline maupun tangan:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Dua hal yang dibedakan dari berkas dasar:
+#
+#   1. Image ditarik dari registry, tidak dibangun di tempat. Server produksi
+#      tidak perlu punya kode sumber, toolchain Go, atau memori untuk bundling
+#      Vite — dan build yang gagal gagal di runner, sebelum menyentuh apa pun
+#      yang sedang melayani.
+#
+#   2. Caddy berdiri di depan dan memegang 80/443. Ia mengurus sertifikat
+#      Let's Encrypt sendiri, termasuk perpanjangannya. Nginx di service `web`
+#      tetap seperti adanya, hanya tidak lagi menghadap langsung ke internet.
+#
+# Butuh Compose v2.24+ karena memakai `!reset`.
+
+services:
+  api:
+    image: ghcr.io/irfan-ghzl/pintour-travel-api:${TAG:-latest}
+
+  web:
+    image: ghcr.io/irfan-ghzl/pintour-travel-web:${TAG:-latest}
+    # Caddy yang memegang port publik sekarang. Tanpa !reset, daftar ports dari
+    # berkas dasar ikut terbawa dan keduanya berebut 80.
+    ports: !reset []
+    expose:
+      - "80"
+
+  # ── Caddy: TLS otomatis ──────────────────────────────────────────────────────
+  caddy:
+    image: caddy:2-alpine
+    container_name: pintour_caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Sertifikat bertahan lintas restart. Tanpa volume ini setiap `up` meminta
+      # sertifikat baru, dan Let's Encrypt punya batas yang akan tercapai jauh
+      # sebelum ada yang menyadari sebabnya.
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN:?wajib diisi di .env — domain publik yang menunjuk ke server ini}
+    depends_on:
+      - web
+
+volumes:
+  caddy_data:
+  caddy_config:
