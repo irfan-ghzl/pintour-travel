@@ -1,0 +1,30 @@
+# Overlay pengembangan lokal. Dipakai eksplisit:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# Berkas dasar menutup semua port kecuali web, karena itulah yang benar untuk
+# sebuah mesin yang menghadap internet. Yang dibuka kembali di sini hanya yang
+# memang dibutuhkan saat mengembangkan di laptop:
+#
+#   * 5432 — psql, dan test kontrak repository yang menunjuk
+#     TEST_DATABASE_URL ke 127.0.0.1:5432
+#   * 6379 — redis-cli
+#   * 8080 — memanggil API langsung dengan curl tanpa lewat nginx, yang membuat
+#     galat proxy dan galat aplikasi bisa dibedakan
+#
+# Namanya bukan docker-compose.override.yml dengan sengaja: compose memuat
+# override secara otomatis, sehingga sebuah berkas dengan nama itu akan ikut
+# membuka port di produksi tanpa ada yang memintanya.
+
+services:
+  db:
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  redis:
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  api:
+    ports:
+      - "127.0.0.1:8080:8080"

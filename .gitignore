@@ -103,3 +103,63 @@ tmp/
 *.tmp
 *.cache
 .parcel-cache/
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Yang belum tertangkap di atas
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Manifest npm di root repo. Proyek ini backend Go; frontend punya manifestnya
+# sendiri di web/package.json (yang memang dipakai Dockerfile.web dan `make
+# web-build`). Yang di root berisi satu dependensi typescript, tidak dirujuk
+# Makefile, Dockerfile, compose, maupun CI — sisa `npm install` yang terlanjur
+# dijalankan di direktori yang salah.
+/package.json
+/package-lock.json
+
+# node_modules di level manapun. Pola lama hanya menyebut web/, sehingga sebuah
+# `npm install` yang tidak sengaja dijalankan di root repo — atau di scripts/ —
+# menaruh ratusan megabita di luar jangkauannya.
+node_modules/
+
+# Artefak konflik merge/rebase. Muncul di sebelah berkas aslinya dengan nama
+# yang mirip, jadi gampang ikut ter-`git add -A`.
+*.orig
+*.rej
+*.BACKUP.*
+*.BASE.*
+*.LOCAL.*
+*.REMOTE.*
+
+# Kredensial dan kunci. Tidak ada yang sah berada di repo ini; pola tetap
+# dipasang supaya salah taruh berhenti sebagai berkas lokal, bukan sebagai
+# commit yang harus ditarik ulang.
+*.pem
+*.key
+*.p12
+*.pfx
+.env.test
+.env.docker
+
+# Berkas hasil kerja lokal
+*.pid
+*.seed
+*.local
+.direnv/
+web/coverage/
+
+# Editor lain yang belum disebut
+.fleet/
+.zed/
+*.sublime-workspace
+*.sublime-project
+
+# Basis data lokal sekali pakai (mis. dump yang di-restore untuk uji coba)
+*.sqlite
+*.sqlite3
+*.dump
+db/dump/
+
+# Keluaran perkakas Go yang tidak dipakai deployment
+*.prof
+*.pprof
+__debug_bin*
