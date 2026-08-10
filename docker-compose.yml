@@ -1,3 +1,20 @@
+# Deployment utama (PRD §24). Nginx pada service `web` adalah satu-satunya pintu
+# masuk: seluruh service lain hanya `expose`, artinya terjangkau dari jaringan
+# internal Docker tapi tidak dari luar mesin.
+#
+# Tidak ada kredensial di berkas ini. Berkas ini terlacak git pada repo publik,
+# jadi setiap nilai rahasia di sini sama saja dengan diumumkan. Yang dipakai
+# adalah bentuk `${VAR:?pesan}` — compose berhenti dengan pesan itu bila
+# variabelnya kosong, alih-alih diam-diam memakai nilai bawaan yang semua orang
+# sudah tahu.
+#
+# Pengembangan lokal butuh port basis data terbuka (psql, test kontrak
+# repository). Itu disediakan terpisah:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# Produksi cukup `docker compose up -d`, dan tertutup karena itu bawaannya.
+
 services:
   # ── PostgreSQL ────────────────────────────────────────────────────────────────
   db:
@@ -5,35 +22,46 @@ services:
     container_name: pintour_db
     restart: unless-stopped
     environment:
-      POSTGRES_DB:       pintour_db
-      POSTGRES_USER:     pintour
-      POSTGRES_PASSWORD: pintour_pass
+      POSTGRES_DB:       ${POSTGRES_DB:-pintour_db}
+      POSTGRES_USER:     ${POSTGRES_USER:-pintour}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?wajib diisi di .env — jangan pakai nilai yang pernah ada di repo}
     volumes:
       - db_data:/var/lib/postgresql/data
-      # Auto-apply semua migration saat container pertama kali start.
-      # Postgres jalankan file di /docker-entrypoint-initdb.d/ urut nama.
-      - ./db/migrations:/docker-entrypoint-initdb.d:ro
-    ports:
-      - "5432:5432"
+      # Migrasi TIDAK lagi dipasang ke /docker-entrypoint-initdb.d. Direktori itu
+      # hanya dijalankan Postgres saat volume pertama kali dibuat, sehingga
+      # deployment yang sudah berisi data tidak pernah menerima migrasi baru —
+      # persis cara skema tertinggal di 007 sementara kode menunggu 009.
+      # Service `api` yang menerapkannya saat start, setiap kali, dan berhenti
+      # bila gagal.
+    expose:
+      - "5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U pintour -d pintour_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pintour} -d ${POSTGRES_DB:-pintour_db}"]
       interval: 10s
       timeout: 5s
       retries: 10
-      start_period: 60s    # beri waktu init script (apply migration 001-005) selesai
+      start_period: 20s
 
   # ── Redis ─────────────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
     container_name: pintour_redis
     restart: unless-stopped
-    command: redis-server --save 60 1 --loglevel warning
+    # Sebelumnya Redis berjalan tanpa autentikasi sama sekali. Selama portnya
+    # tertutup itu hanya berarti siapa pun yang sudah masuk ke jaringan Docker
+    # bisa membacanya — tapi pertahanan yang bergantung pada satu lapisan saja
+    # runtuh seluruhnya begitu lapisan itu keliru dibuka.
+    command: >
+      redis-server --save 60 1 --loglevel warning
+      --requirepass ${REDIS_PASSWORD:?wajib diisi di .env}
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?wajib diisi di .env}
     volumes:
       - redis_data:/data
-    ports:
-      - "6379:6379"
+    expose:
+      - "6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -43,7 +71,6 @@ services:
     image: hertzg/tesseract-server:latest
     container_name: pintour_tesseract
     restart: unless-stopped
-    # Tidak expose port ke host — hanya diakses dari service `api` lewat jaringan internal.
     expose:
       - "8884"
     healthcheck:
@@ -63,20 +90,25 @@ services:
     container_name: pintour_api
     restart: unless-stopped
     env_file:
-      - .env                                  # baca semua env dari .env
+      - .env                                  # rahasia aplikasi dibaca dari sini
     environment:
-      # Override yang khusus untuk container (host db & redis berbeda dengan localhost)
-      DATABASE_URL:    postgres://pintour:pintour_pass@db:5432/pintour_db?sslmode=disable
-      REDIS_ADDR:      redis:6379
-      APP_ENV:         ${APP_ENV:-production} # default production di container
-      SERVER_PORT:     8080
+      # Disusun dari bagian-bagiannya supaya password punya satu sumber. Ditulis
+      # utuh di sini dulu, jadi mengganti password berarti mengganti dua tempat
+      # dan lupa salah satunya berarti API gagal connect tanpa sebab yang jelas.
+      DATABASE_URL: postgres://${POSTGRES_USER:-pintour}:${POSTGRES_PASSWORD:?wajib diisi di .env}@db:5432/${POSTGRES_DB:-pintour_db}?sslmode=disable
+      REDIS_ADDR:     redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?wajib diisi di .env}
+      APP_ENV:        ${APP_ENV:-production}
+      SERVER_PORT:    8080
       OCR_ENGINE:        tesseract_local      # v2.0 F6 — OCR self-hosted
       TESSERACT_API_URL: http://tesseract-api:8884
     dns:
       - 8.8.8.8
       - 8.8.4.4
-    ports:
-      - "8080:8080"
+    # Tidak di-publish. Nginx sudah mem-proxy /api/ ke sini; membuka 8080 ke host
+    # berarti ada jalan masuk yang melewati nginx — dan melewati TLS di depannya.
+    expose:
+      - "8080"
     depends_on:
       db:
         condition: service_healthy
@@ -85,7 +117,7 @@ services:
       tesseract-api:
         condition: service_started
 
-  # ── React web app (Nginx) ─────────────────────────────────────────────────────
+  # ── React web app (Nginx) — satu-satunya pintu ke luar ───────────────────────
   web:
     build:
       context: .
@@ -93,7 +125,9 @@ services:
     container_name: pintour_web
     restart: unless-stopped
     ports:
-      - "80:80"
+      # Di produksi biarkan terminator TLS (Caddy/nginx host) yang memegang 443
+      # dan arahkan ke sini lewat WEB_PORT, alih-alih membuka 80 ke publik.
+      - "${WEB_PORT:-80}:80"
     depends_on:
       - api
 
