@@ -9,28 +9,33 @@ import (
 
 	"github.com/go-co-op/gocron/v2" // PRD §18: gocron untuk cron in-process
 
+	"github.com/irfan-ghzl/pintour-travel/internal/config"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/notification"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
+	domainUser "github.com/irfan-ghzl/pintour-travel/internal/domain/user"
+	"github.com/irfan-ghzl/pintour-travel/internal/safe"
 	"github.com/irfan-ghzl/pintour-travel/internal/service"
 )
 
 // Scheduler runs automated WA notification jobs (§17) + retention cleanup (§25.4)
-// via gocron (PRD §18 — go-co-op/gocron).
+// + the automation jobs (prompt §2) via gocron (PRD §18 — go-co-op/gocron).
 type Scheduler struct {
 	participants participant.Repository
+	users        domainUser.Repository
 	fonnte       *service.FonnteService
+	email        *service.EmailService
 	db           *sql.DB
 	cron         gocron.Scheduler
 }
 
-func New(participants participant.Repository, fonnte *service.FonnteService, db *sql.DB) (*Scheduler, error) {
+func New(participants participant.Repository, users domainUser.Repository, fonnte *service.FonnteService, email *service.EmailService, db *sql.DB) (*Scheduler, error) {
 	cron, err := gocron.NewScheduler(
 		gocron.WithLocation(time.Local),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("init gocron: %w", err)
 	}
-	return &Scheduler{participants: participants, fonnte: fonnte, db: db, cron: cron}, nil
+	return &Scheduler{participants: participants, users: users, fonnte: fonnte, email: email, db: db, cron: cron}, nil
 }
 
 // Start launches all scheduled jobs via gocron.
@@ -45,6 +50,10 @@ func (s *Scheduler) Start() {
 		{"00:01", s.activateBriefing, "briefing-activation H-14"},
 		{"03:00", s.sendAirportInfo, "airport-info hari-H"},
 		{"02:00", s.retentionCleanup, "retention-cleanup §25.4"},
+		// Automation jobs (prompt §2)
+		{"00:01", s.expireLeads, "expire-leads §2.2"},
+		{"00:05", s.expireInvoices, "expire-invoices §2.3"},
+		{"08:00", s.checkBatchQuota, "batch-quota-warning §2.4"},
 	}
 
 	for _, j := range jobs {
@@ -53,7 +62,10 @@ func (s *Scheduler) Start() {
 			gocron.DailyJob(1, gocron.NewAtTimes(
 				gocron.NewAtTime(uint(t.Hour()), uint(t.Minute()), 0),
 			)),
-			gocron.NewTask(j.fn),
+			// gocron recovers a panicking job but keeps only the value; wrapping
+			// it means the stack that caused it reaches the log as well, in the
+			// same shape as every other background job.
+			gocron.NewTask(safe.Recovered(j.label, j.fn)),
 			gocron.WithName(j.label),
 		)
 		if err != nil {
@@ -61,8 +73,17 @@ func (s *Scheduler) Start() {
 		}
 	}
 
+	// checkStaleLeads runs hourly (prompt §2.1).
+	if _, err := s.cron.NewJob(
+		gocron.DurationJob(time.Hour),
+		gocron.NewTask(safe.Recovered("stale-leads §2.1", s.checkStaleLeads)),
+		gocron.WithName("stale-leads §2.1"),
+	); err != nil {
+		log.Printf("scheduler: failed to schedule stale-leads: %v", err)
+	}
+
 	s.cron.Start()
-	log.Println("Scheduler started (gocron): WA jobs + retention cleanup")
+	log.Println("Scheduler started (gocron): WA jobs + retention cleanup + automation §2")
 }
 
 // Stop shuts down the scheduler gracefully.
@@ -75,24 +96,80 @@ func (s *Scheduler) Stop() {
 // sendPaymentReminders sends WA to participants with unpaid invoices (H+1, H+3, H+6).
 func (s *Scheduler) sendPaymentReminders() {
 	ctx := context.Background()
-	reminders := []struct {
-		days     int
-		dayLabel string
-	}{
-		{1, "1 hari"},
-		{3, "3 hari"},
-		{6, "6 hari"},
-	}
-	for _, r := range reminders {
-		pts, err := s.participants.ListWithUnpaidInvoiceDaysOld(ctx, r.days)
+	for _, days := range notification.PaymentReminderDays {
+		// Read the invoice, not just the participant. The old call passed an empty
+		// invoice number — so the message named no invoice, leaving a participant
+		// with two unpaid ones no way to tell which was meant — and passed the
+		// PARTICIPANT id as the reference while labelling it "invoice", which
+		// broke the trail from an invoice to the messages sent about it.
+		due, err := s.unpaidInvoiceReminders(ctx, days)
 		if err != nil {
+			// Loud, and named as a failure. This query failed on every run for
+			// weeks while the job reported nothing: it logged and returned an
+			// empty list, which is indistinguishable from "no one is overdue".
+			log.Printf("sendPaymentReminders: TIDAK ADA pengingat H+%d yang terkirim — kueri gagal: %v", days, err)
 			continue
 		}
-		for _, p := range pts {
-			_ = s.fonnte.SendPaymentReminder(ctx, p.Phone, p.Name, "", r.dayLabel, p.ID)
+		for _, d := range due {
+			if d.phone == "" {
+				continue
+			}
+			_ = s.fonnte.SendPaymentReminder(ctx, d.phone, d.name,
+				d.invoiceNumber, days, d.invoiceID)
 			time.Sleep(time.Second) // §17.2 rate-limit Fonnte
 		}
 	}
+}
+
+// unpaidInvoiceReminder is one participant to nudge about one invoice.
+type unpaidInvoiceReminder struct {
+	invoiceID     string
+	invoiceNumber string
+	name          string
+	phone         string
+}
+
+// unpaidInvoiceReminders lists the unpaid invoices issued `days` days ago along
+// with who to tell, deduped against a reminder of the same kind already sent for
+// that invoice today — the same marker pattern the overdue and quota jobs use.
+//
+// The age is bound with make_interval rather than by pasting the number into a
+// string. `$1 || ' days'` forces Postgres to type the parameter as text, and the
+// driver refuses to encode an int as text — so the query failed before it was
+// ever sent, every day, for every one of the three reminders.
+func (s *Scheduler) unpaidInvoiceReminders(ctx context.Context, days int) ([]unpaidInvoiceReminder, error) {
+	if s.db == nil {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT i.id, i.invoice_number, p.name, COALESCE(p.phone,'')
+		FROM invoices i
+		JOIN participants p ON p.id = i.participant_id
+		WHERE i.deleted_at IS NULL
+		  AND i.status IN ('diterbitkan','menunggu_bayar')
+		  AND i.created_at::date = (NOW() - make_interval(days => $1))::date
+		  AND NOT EXISTS (
+		    SELECT 1 FROM wa_notifications w
+		    WHERE w.reference_id = i.id
+		      AND w.reference_type = 'invoice'
+		      AND w.message_type = $2
+		      AND w.created_at::date = CURRENT_DATE
+		  )
+		ORDER BY i.created_at`, days, notification.PaymentReminderType(days))
+	if err != nil {
+		return nil, fmt.Errorf("kueri pengingat H+%d: %w", days, err)
+	}
+	defer rows.Close()
+
+	var out []unpaidInvoiceReminder
+	for rows.Next() {
+		var r unpaidInvoiceReminder
+		if err := rows.Scan(&r.invoiceID, &r.invoiceNumber, &r.name, &r.phone); err != nil {
+			return nil, fmt.Errorf("baca baris pengingat H+%d: %w", days, err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // sendDepartureReminders sends WA blasts at H-30/H-14/H-7/H-1.
@@ -121,6 +198,11 @@ func (s *Scheduler) sendDepartureReminders() {
 			}
 			_ = s.fonnte.SendDepartureReminder(ctx, p.Phone, p.Name,
 				p.PackageName, depDate, r.label, r.msgType, p.ID)
+			// §3.2 H-14 reminder email (checklist persiapan).
+			if r.days == 14 && s.email != nil && p.Email != "" {
+				_ = s.email.SendEmailReminderH14(ctx, p.Email, p.Name, p.PackageName, depDate,
+					config.PortalBaseURL()+"/portal")
+			}
 			time.Sleep(time.Second)
 		}
 	}
@@ -150,6 +232,11 @@ func (s *Scheduler) activateBriefing() {
 		refType := "participant"
 		_ = s.fonnte.Send(ctx, p.Phone, p.Name,
 			notification.TypeReminderH14, msg, &p.ID, &refType)
+		// §3.2 briefing-activated email.
+		if s.email != nil && p.Email != "" {
+			_ = s.email.SendEmailBriefingActivated(ctx, p.Email, p.Name, p.PackageName, "",
+				depDate, config.PortalBaseURL()+"/portal/briefing")
+		}
 		time.Sleep(time.Second)
 	}
 }

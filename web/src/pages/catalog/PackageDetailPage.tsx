@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { MapPin, Clock, ChevronDown, ChevronUp, Send } from 'lucide-react'
 import toast from 'react-hot-toast'
-import api from '../../utils/api'
+import api, { getConsultationPrefill } from '../../utils/api'
+import { formatDate } from '../../utils/date'
 import type { PackageDetailResponse, CreateLeadRequest } from '../../types'
 
 export default function PackageDetailPage() {
@@ -13,6 +14,34 @@ export default function PackageDetailPage() {
   const [form, setForm] = useState<CreateLeadRequest>({
     name: '', phone: '', email: '', pax: 1, message: '', package_id: '', source: 'organic',
   })
+
+  // FR-PORTAL-12: a logged-in participant gets the form filled in from the
+  // server, not from what the browser happened to keep. localStorage held only
+  // a name and phone, and held them from whenever they were last written — a
+  // detail an admin corrected since would have been re-submitted stale.
+  const { data: prefill } = useQuery({
+    queryKey: ['consultation-prefill'],
+    queryFn: () => getConsultationPrefill(),
+    enabled: !!localStorage.getItem('portal_token'),
+    retry: false,
+  })
+  const isReturning = !!prefill?.phone
+
+  // Applied once, and only over fields still untouched, so the participant stays
+  // free to edit anything it filled in.
+  const prefilled = useRef(false)
+  useEffect(() => {
+    if (!prefill || prefilled.current) return
+    prefilled.current = true
+    setForm(f => ({
+      ...f,
+      name: f.name || prefill.name,
+      phone: f.phone || prefill.phone,
+      email: f.email || prefill.email,
+      message: f.message || (prefill.room_type ? `Tipe kamar sebelumnya: ${prefill.room_type}` : ''),
+      source: 'referral',
+    }))
+  }, [prefill])
   const [phoneError, setPhoneError] = useState('')
   const [consentGiven, setConsentGiven] = useState(false)
   const [consentError, setConsentError] = useState('')
@@ -193,7 +222,7 @@ export default function PackageDetailPage() {
                 <div className="space-y-2">
                   {batches.filter(b => b.status === 'tersedia').slice(0, 3).map((b) => (
                     <div key={b.id} className="flex items-center justify-between text-xs bg-gray-50 rounded px-3 py-2">
-                      <span>{new Date(b.departure_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                      <span>{formatDate(b.departure_date)}</span>
                       <span className="text-emerald-600 font-medium">Tersedia</span>
                     </div>
                   ))}
@@ -211,6 +240,12 @@ export default function PackageDetailPage() {
             {/* Lead form */}
             {showForm && (
               <form onSubmit={handleSubmit} className="mt-4 space-y-3">
+                {/* v2.0 F3 — returning customer: data sudah terisi dari akun portal */}
+                {isReturning && (
+                  <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 text-xs text-blue-700">
+                    ⭐ Selamat datang kembali! Data Anda sudah terisi otomatis. Anda tetap memakai akun portal yang sama — tidak perlu daftar ulang.
+                  </div>
+                )}
                 <input
                   required
                   placeholder="Nama lengkap *"

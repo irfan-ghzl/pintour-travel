@@ -6,25 +6,59 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/notification"
 )
 
+// defaultFonnteBaseURL is the gateway every deployment talks to.
+const defaultFonnteBaseURL = "https://api.fonnte.com"
+
 // FonnteService sends WhatsApp messages via Fonnte API.
 type FonnteService struct {
 	apiToken string
+	baseURL  string
 	repo     notification.Repository
 	client   *http.Client
 }
 
-func NewFonnteService(apiToken string, repo notification.Repository) *FonnteService {
-	return &FonnteService{
+// FonnteOption customises the client at construction.
+type FonnteOption func(*FonnteService)
+
+// WithFonnteBaseURL points the client somewhere other than the real gateway.
+//
+// It exists for tests: Send returns before writing its notification row when it
+// has no token, so with the endpoint hardcoded there was no way to observe any
+// message the system sends — and handing the tests a real token would have put
+// them on the network. Given a fake token and a local server, Send now runs the
+// whole way through: it writes the row, posts, and updates the status. An empty
+// value keeps the default, so no deployment behaviour changes.
+func WithFonnteBaseURL(baseURL string) FonnteOption {
+	return func(s *FonnteService) {
+		if baseURL != "" {
+			s.baseURL = strings.TrimRight(baseURL, "/")
+		}
+	}
+}
+
+func NewFonnteService(apiToken string, repo notification.Repository, opts ...FonnteOption) *FonnteService {
+	s := &FonnteService{
 		apiToken: apiToken,
+		baseURL:  defaultFonnteBaseURL,
 		repo:     repo,
 		client:   &http.Client{Timeout: 15 * time.Second},
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
+
+// Enabled reports whether a gateway is configured. Send is a no-op without one,
+// so a caller that tells a user "we messaged them" has to ask first — mirrors
+// StorageService.Enabled.
+func (s *FonnteService) Enabled() bool { return s != nil && s.repo != nil && s.apiToken != "" }
 
 type fonntePayload struct {
 	Target      string `json:"target"`
@@ -77,7 +111,7 @@ func (s *FonnteService) Send(ctx context.Context, phone, name, msgType, message 
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-			"https://api.fonnte.com/send", bytes.NewBuffer(body))
+			s.baseURL+"/send", bytes.NewBuffer(body))
 		if err != nil {
 			_ = s.repo.UpdateStatus(ctx, n.ID, "failed", err.Error())
 			return err
@@ -166,18 +200,18 @@ func (s *FonnteService) SendInvoice(ctx context.Context, phone, name, invoiceNum
 	return s.Send(ctx, phone, name, notification.TypeInvoiceSent, msg, &invoiceID, &refType)
 }
 
-func (s *FonnteService) SendPaymentReminder(ctx context.Context, phone, name, invoiceNumber, dayLabel, invoiceID string) error {
+// SendPaymentReminder chases one unpaid invoice. days is the invoice's age, and
+// decides both how the message reads and which template it is logged as — taking
+// the age rather than a rendered label keeps those two from disagreeing, which
+// is how the day-6 reminder came to be recorded as a day-1 one.
+func (s *FonnteService) SendPaymentReminder(ctx context.Context, phone, name, invoiceNumber string, days int, invoiceID string) error {
 	msg := fmt.Sprintf(
 		"⚠️ *Pengingat Pembayaran*\n\n"+
 			"Halo *%s*, invoice *%s* Anda belum dibayar (%s sejak diterbitkan).\n\n"+
 			"Segera lakukan pembayaran agar proses perjalanan Anda dapat berjalan lancar.\n\n"+
-			"Hubungi kami jika ada pertanyaan.", name, invoiceNumber, dayLabel)
-	msgType := notification.TypePaymentReminder1
-	if dayLabel == "3 hari" {
-		msgType = notification.TypePaymentReminder3
-	}
+			"Hubungi kami jika ada pertanyaan.", name, invoiceNumber, notification.PaymentReminderLabel(days))
 	refType := "invoice"
-	return s.Send(ctx, phone, name, msgType, msg, &invoiceID, &refType)
+	return s.Send(ctx, phone, name, notification.PaymentReminderType(days), msg, &invoiceID, &refType)
 }
 
 func (s *FonnteService) SendDocRequest(ctx context.Context, phone, name, packageName, portalLink, participantID string) error {
@@ -187,7 +221,10 @@ func (s *FonnteService) SendDocRequest(ctx context.Context, phone, name, package
 			"Langkah selanjutnya, silakan upload dokumen yang diperlukan melalui:\n"+
 			"🔗 %s\n\n"+
 			"Username: nomor WA Anda\n"+
-			"Password: dikirim via pesan terpisah\n\n"+
+			// The password went out in its own message when the account was
+			// created (PORTAL_CREDENTIALS). This used to promise a separate
+			// message that nothing ever sent.
+			"Password: sesuai pesan *Akun Portal Pintour Anda* yang kami kirim sebelumnya\n\n"+
 			"Harap lengkapi sebelum H-14 keberangkatan.", name, packageName, portalLink)
 	refType := "participant"
 	return s.Send(ctx, phone, name, notification.TypeDocRequest, msg, &participantID, &refType)
@@ -215,4 +252,122 @@ func (s *FonnteService) SendDepartureReminder(ctx context.Context, phone, name, 
 		dayLabel, name, packageName, departureDate)
 	refType := "participant"
 	return s.Send(ctx, phone, name, msgType, msg, &participantID, &refType)
+}
+
+// ─── Automasi templates (prompt §3.1) ─────────────────────────────────────────
+// Adapted to the existing password-based portal: portal access is via WA + password
+// login at {portalLink}, not a one-time token link.
+
+// SendPortalCredentials hands a newly converted participant the temporary
+// password for their portal account (FR-PORTAL-01).
+//
+// The portal has no password-reset flow, so this message is the only copy of the
+// credential that ever leaves the system — the raw password is hashed the moment
+// it is generated and is never stored anywhere it could be read back.
+func (s *FonnteService) SendPortalCredentials(ctx context.Context, phone, name, password, portalLink, participantID string) error {
+	refType := "participant"
+	return s.Send(ctx, phone, name, notification.TypePortalCredentials,
+		portalCredentialsMessage(name, phone, password, portalLink), &participantID, &refType)
+}
+
+// portalCredentialsMessage renders the credential message.
+//
+// It is the one template split out from its Send wrapper, because it is the one
+// whose content is the feature: a message that loses the password still sends
+// successfully and still logs as delivered, and the participant it was for can
+// never get in. Rendering it separately is what lets that be asserted without a
+// gateway to send through.
+func portalCredentialsMessage(name, phone, password, portalLink string) string {
+	return fmt.Sprintf(
+		"🔐 *Akun Portal Pintour Anda*\n\n"+
+			"Halo *%s*, akun portal peserta Anda sudah dibuat.\n\n"+
+			"🔗 Portal: %s\n"+
+			"Username: *%s* (nomor WA ini)\n"+
+			"Password sementara: *%s*\n\n"+
+			"Simpan pesan ini baik-baik dan jangan bagikan ke siapa pun. "+
+			"Gunakan portal untuk mengunggah dokumen dan memantau status keberangkatan Anda.",
+		name, portalLink, phone, password)
+}
+
+// SendPortalActivated notifies a participant that their portal is active after
+// payment confirmation (PORTAL_ACTIVATED).
+func (s *FonnteService) SendPortalActivated(ctx context.Context, phone, name, email, portalLink, participantID string) error {
+	msg := fmt.Sprintf(
+		"🎉 *Portal Peserta Aktif!*\n\n"+
+			"Halo *%s*! Pembayaran Anda telah dikonfirmasi dan portal peserta Anda kini aktif.\n\n"+
+			"🔗 Akses portal: %s\n"+
+			"Username: *%s* (nomor WA Anda)\n\n"+
+			"Gunakan portal untuk upload dokumen perjalanan dan memantau status keberangkatan Anda.",
+		name, portalLink, email)
+	refType := "participant"
+	return s.Send(ctx, phone, name, notification.TypePortalActivated, msg, &participantID, &refType)
+}
+
+// SendPaymentReceived confirms a (partial or full) payment was received (PAYMENT_RECEIVED).
+func (s *FonnteService) SendPaymentReceived(ctx context.Context, phone, name, amount, packageName, invoiceID string) error {
+	msg := fmt.Sprintf(
+		"✅ *Pembayaran Diterima*\n\n"+
+			"Halo *%s*, pembayaran Anda sebesar *Rp %s* untuk paket *%s* telah kami terima dan dikonfirmasi.\n\n"+
+			"Terima kasih! 🙏",
+		name, amount, packageName)
+	refType := "invoice"
+	return s.Send(ctx, phone, name, notification.TypePaymentReceived, msg, &invoiceID, &refType)
+}
+
+// SendPaymentRejected notifies a participant their payment proof was rejected (PAYMENT_REJECTED).
+func (s *FonnteService) SendPaymentRejected(ctx context.Context, phone, name, reason, portalLink, invoiceID string) error {
+	msg := fmt.Sprintf(
+		"❌ *Bukti Pembayaran Ditolak*\n\n"+
+			"Halo *%s*, maaf bukti pembayaran Anda ditolak.\n\n"+
+			"Alasan: %s\n\n"+
+			"Mohon upload ulang bukti pembayaran yang valid melalui portal:\n🔗 %s",
+		name, reason, portalLink)
+	refType := "invoice"
+	return s.Send(ctx, phone, name, notification.TypePaymentRejected, msg, &invoiceID, &refType)
+}
+
+// SendPaymentOverdue notifies a participant their invoice passed its due date (PAYMENT_OVERDUE).
+func (s *FonnteService) SendPaymentOverdue(ctx context.Context, phone, name, invoiceNumber, adminContact, invoiceID string) error {
+	msg := fmt.Sprintf(
+		"⚠️ *Invoice Jatuh Tempo*\n\n"+
+			"Invoice *#%s* Anda telah melewati batas waktu pembayaran.\n\n"+
+			"Segera hubungi tim kami untuk informasi lebih lanjut.\n"+
+			"Kontak: %s",
+		invoiceNumber, adminContact)
+	refType := "invoice"
+	return s.Send(ctx, phone, name, notification.TypePaymentOverdue, msg, &invoiceID, &refType)
+}
+
+// SendDocApproved notifies a participant all their documents are approved (DOC_APPROVED).
+func (s *FonnteService) SendDocApproved(ctx context.Context, phone, name, participantID string) error {
+	msg := fmt.Sprintf(
+		"✅ *Dokumen Disetujui*\n\n"+
+			"Halo *%s*, semua dokumen perjalanan Anda telah diverifikasi dan disetujui!\n\n"+
+			"Persiapkan diri untuk keberangkatan. Kami akan mengirim briefing H-14. 🌍",
+		name)
+	refType := "participant"
+	return s.Send(ctx, phone, name, notification.TypeDocApproved, msg, &participantID, &refType)
+}
+
+// SendBriefingActivated notifies a participant the digital briefing is active (BRIEFING_ACTIVATED).
+func (s *FonnteService) SendBriefingActivated(ctx context.Context, phone, name, tourLeaderName, departureDate, portalLink, participantID string) error {
+	msg := fmt.Sprintf(
+		"📋 *Briefing Perjalanan Aktif!*\n\n"+
+			"Halo *%s*, briefing perjalanan Anda sudah aktif.\n\n"+
+			"🔗 Akses di portal: %s\n"+
+			"Tour Leader: *%s*\n"+
+			"Keberangkatan: *%s*",
+		name, portalLink, tourLeaderName, departureDate)
+	refType := "participant"
+	return s.Send(ctx, phone, name, notification.TypeBriefingActivated, msg, &participantID, &refType)
+}
+
+// SendLeadsStale reminds a consultant about an unresponded lead (LEADS_STALE, prompt §2.1).
+func (s *FonnteService) SendLeadsStale(ctx context.Context, consultantPhone, consultantName, leadsName, leadID string) error {
+	msg := fmt.Sprintf(
+		"⚠️ *Leads Belum Direspons*\n\n"+
+			"Leads *%s* belum direspons selama 24 jam. Segera hubungi!\n\nID: %s",
+		leadsName, leadID)
+	refType := "lead"
+	return s.Send(ctx, consultantPhone, consultantName, notification.TypeLeadsStale, msg, &leadID, &refType)
 }

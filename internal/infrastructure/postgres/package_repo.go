@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -14,9 +15,14 @@ type packageRepo struct{ db *sql.DB }
 func NewPackageRepo(db *sql.DB) pkg.Repository { return &packageRepo{db} }
 
 func (r *packageRepo) Create(ctx context.Context, p *pkg.Package) error {
-	if len(p.Facilities) == 0 {
-		p.Facilities = []byte("[]")
-	}
+	// itinerary, requirements, and facilities are NOT NULL DEFAULT '[]', but the
+	// statement names them, so a nil slice reaches Postgres as NULL and the
+	// default never applies. Only facilities used to be guarded — writing a
+	// package before its itinerary exists, which the CMS allows, failed on the
+	// constraint.
+	defaultEmptyJSON(&p.Itinerary)
+	defaultEmptyJSON(&p.Requirements)
+	defaultEmptyJSON(&p.Facilities)
 	q := `INSERT INTO packages
 		(id, name, slug, destination, category, duration_days, description,
 		 itinerary, requirements, facilities, terms_conditions, visa_info,
@@ -31,9 +37,14 @@ func (r *packageRepo) Create(ctx context.Context, p *pkg.Package) error {
 }
 
 func (r *packageRepo) Update(ctx context.Context, p *pkg.Package) error {
-	if len(p.Facilities) == 0 {
-		p.Facilities = []byte("[]")
-	}
+	// itinerary, requirements, and facilities are NOT NULL DEFAULT '[]', but the
+	// statement names them, so a nil slice reaches Postgres as NULL and the
+	// default never applies. Only facilities used to be guarded — writing a
+	// package before its itinerary exists, which the CMS allows, failed on the
+	// constraint.
+	defaultEmptyJSON(&p.Itinerary)
+	defaultEmptyJSON(&p.Requirements)
+	defaultEmptyJSON(&p.Facilities)
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE packages SET name=$1,slug=$2,destination=$3,category=$4,duration_days=$5,
 		description=$6,itinerary=$7,requirements=$8,facilities=$9,
@@ -123,8 +134,12 @@ func (r *packageRepo) List(ctx context.Context, f pkg.Filter) ([]pkg.Package, in
 		return nil, 0, err
 	}
 
-	if f.Page < 1 { f.Page = 1 }
-	if f.PerPage < 1 { f.PerPage = 20 }
+	if f.Page < 1 {
+		f.Page = 1
+	}
+	if f.PerPage < 1 {
+		f.PerPage = 20
+	}
 	offset := (f.Page - 1) * f.PerPage
 	args = append(args, f.PerPage, offset)
 	q := fmt.Sprintf("SELECT "+packageCols+" FROM packages %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d", where, i, i+1)
@@ -326,4 +341,13 @@ func scanBatches(rows *sql.Rows) ([]pkg.PackageBatch, error) {
 		batches = append(batches, b)
 	}
 	return batches, rows.Err()
+}
+
+// defaultEmptyJSON substitutes an empty JSON array for a nil column value, so a
+// NOT NULL DEFAULT '[]' column keeps its default even though the statement names
+// it explicitly.
+func defaultEmptyJSON(v *json.RawMessage) {
+	if len(*v) == 0 {
+		*v = json.RawMessage("[]")
+	}
 }

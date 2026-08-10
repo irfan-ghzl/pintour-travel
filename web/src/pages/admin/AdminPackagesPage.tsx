@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Pencil, Trash2, Calendar } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../../utils/api'
+import { formatDate } from '../../utils/date'
 import type { Package, PackageBatch, PaginatedResponse } from '../../types'
 
 const CATEGORIES = ['reguler', 'umroh', 'halal', 'honeymoon'] as const
@@ -316,9 +317,9 @@ function BatchModal({ pkg, onClose }: { pkg: Package; onClose: () => void }) {
           ) : (batches ?? []).map((b) => (
             <div key={b.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2 text-sm">
               <div>
-                <span className="font-medium">{new Date(b.departure_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                <span className="font-medium">{formatDate(b.departure_date)}</span>
                 <span className="text-gray-400 mx-2">→</span>
-                <span>{new Date(b.return_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}</span>
+                <span>{formatDate(b.return_date, { day: 'numeric', month: 'short' })}</span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-gray-500">{b.quota} pax</span>

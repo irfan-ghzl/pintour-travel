@@ -2,13 +2,17 @@ package httpdelivery
 
 import (
 	"context"
+	"log"
 	"net/http"
-	"os"
+	"time"
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/irfan-ghzl/pintour-travel/internal/config"
+	"github.com/irfan-ghzl/pintour-travel/internal/domain/airport"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/document"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
+	"github.com/irfan-ghzl/pintour-travel/internal/safe"
 	"github.com/irfan-ghzl/pintour-travel/internal/service"
 )
 
@@ -16,16 +20,35 @@ type DocumentHandler struct {
 	docs         document.Repository
 	reqs         document.CountryRequirementRepository
 	participants participant.Repository
+	airport      airport.Repository
 	fonnte       *service.FonnteService
+	email        *service.EmailService
+	// TODO(ocr-v2.0-F3): re-enable fields below when GCP Vision billing active
+	ocr     *service.OCRService
+	ocrRepo document.OCRResultRepository
 }
 
 func NewDocumentHandler(
 	docs document.Repository,
 	reqs document.CountryRequirementRepository,
 	participants participant.Repository,
+	airportRepo airport.Repository,
 	fonnte *service.FonnteService,
+	email *service.EmailService,
+	ocr *service.OCRService,
+	ocrRepo document.OCRResultRepository,
 ) *DocumentHandler {
-	return &DocumentHandler{docs: docs, reqs: reqs, participants: participants, fonnte: fonnte}
+	return &DocumentHandler{docs: docs, reqs: reqs, participants: participants, airport: airportRepo, fonnte: fonnte, email: email, ocr: ocr, ocrRepo: ocrRepo}
+}
+
+// triggerOCR runs OCR asynchronously for a freshly-uploaded document (v2.0 F6).
+func (h *DocumentHandler) triggerOCR(d *document.Document) {
+	if h.ocr == nil || !h.ocr.Enabled() || d.FilePath == "" {
+		return
+	}
+	safe.Go("OCR dokumen peserta", func() {
+		h.ocr.ProcessDocument(context.Background(), d.ID, d.ParticipantID, d.FilePath, d.DocumentType)
+	})
 }
 
 // ListByParticipant godoc
@@ -43,16 +66,93 @@ func (h *DocumentHandler) ListByParticipant(c echo.Context) error {
 	return c.JSON(http.StatusOK, ok(docs))
 }
 
+// ListAllDocuments godoc
+// @Summary      Daftar dokumen global (admin) — filter status / participant
+// @Tags         documents
+// @Security     BearerAuth
+// @Param        status query string false "Filter status (menunggu/disetujui/ditolak)"
+// @Param        participant_id query string false "Filter peserta"
+// @Success      200 {object} map[string]interface{}
+// @Router       /admin/documents [get]
+func (h *DocumentHandler) ListAllDocuments(c echo.Context) error {
+	ctx := c.Request().Context()
+	f := document.Filter{
+		Page:    queryInt(c, "page", 1),
+		PerPage: queryPageSize(c, "per_page", 20),
+	}
+	if s := c.QueryParam("status"); s != "" {
+		f.Status = &s
+	}
+	if pid := c.QueryParam("participant_id"); pid != "" {
+		f.ParticipantID = &pid
+	}
+	docs, total, err := h.docs.List(ctx, f)
+	if err != nil {
+		return serverErr(c, err)
+	}
+
+	response := pageResponse(docs, total, f.Page, f.PerPage)
+	// The review page shows "N of M approved" beside every row. That figure
+	// describes the participant, so it is served for every participant on the
+	// page — not only when the reviewer has narrowed to one.
+	//
+	// Serving it only in the narrowed case left the queue counting the rows in
+	// front of it, which agreed with the active filter and with nothing else: a
+	// participant with two of three documents approved read "0 of 1" while the
+	// page was filtered to the one still pending.
+	if summaries, err := h.reviewSummaries(ctx, docs); err == nil {
+		response["summaries"] = summaries
+		// Kept for the single-participant view, whose caller reads one summary.
+		if f.ParticipantID != nil {
+			response["summary"] = summaries[*f.ParticipantID]
+		}
+	}
+	return c.JSON(http.StatusOK, response)
+}
+
+// reviewSummaries counts the documents of every participant appearing in docs,
+// whatever filter the reviewer is looking through.
+func (h *DocumentHandler) reviewSummaries(ctx context.Context, docs []document.Document) (map[string]document.StatusSummary, error) {
+	seen := make(map[string]bool, len(docs))
+	ids := make([]string, 0, len(docs))
+	for _, d := range docs {
+		if d.ParticipantID != "" && !seen[d.ParticipantID] {
+			seen[d.ParticipantID] = true
+			ids = append(ids, d.ParticipantID)
+		}
+	}
+	return h.docs.SummaryByParticipants(ctx, ids)
+}
+
 func (h *DocumentHandler) UploadDocument(c echo.Context) error {
 	var d document.Document
 	if err := bindJSON(c, &d); err != nil {
-		return badRequest(c, "format tidak valid")
+		return invalidPayload(c, err, "format tidak valid")
 	}
 	d.ParticipantID = c.Param("participant_id")
 	if err := h.docs.Create(c.Request().Context(), &d); err != nil {
 		return serverErr(c, err)
 	}
+	h.triggerOCR(&d) // v2.0 F6 — async OCR via self-hosted Tesseract
 	return c.JSON(http.StatusCreated, ok(d))
+}
+
+// GetOCRResult godoc
+// @Summary      Hasil OCR untuk sebuah dokumen (v2.0 F3)
+// @Tags         documents
+// @Security     BearerAuth
+// @Param        id path string true "Document ID"
+// @Success      200 {object} map[string]interface{}
+// @Router       /admin/documents/{id}/ocr-result [get]
+func (h *DocumentHandler) GetOCRResult(c echo.Context) error {
+	if h.ocrRepo == nil {
+		return notFound(c, "hasil OCR tidak tersedia")
+	}
+	res, err := h.ocrRepo.GetByDocument(c.Request().Context(), c.Param("id"))
+	if err != nil {
+		return notFound(c, "hasil OCR belum tersedia")
+	}
+	return c.JSON(http.StatusOK, ok(res))
 }
 
 // ReviewDocument godoc
@@ -65,32 +165,33 @@ func (h *DocumentHandler) UploadDocument(c echo.Context) error {
 // @Router       /admin/documents/{id}/review [patch]
 func (h *DocumentHandler) ReviewDocument(c echo.Context) error {
 	var body struct {
-		Status          string `json:"status"`
-		RejectionReason string `json:"rejection_reason"`
+		Status          string `json:"status" validate:"required,oneof=disetujui ditolak"`
+		RejectionReason string `json:"rejection_reason" validate:"required_if=Status ditolak"`
 	}
 	if err := bindJSON(c, &body); err != nil {
-		return badRequest(c, "format tidak valid")
-	}
-	if body.Status != "disetujui" && body.Status != "ditolak" {
-		return badRequest(c, "status harus 'disetujui' atau 'ditolak'")
-	}
-	if body.Status == "ditolak" && body.RejectionReason == "" {
-		return badRequest(c, "alasan penolakan harus diisi saat menolak dokumen")
+		return invalidPayload(c, err, "status harus 'disetujui' atau 'ditolak'")
 	}
 	docID := c.Param("id")
-	if err := h.docs.Review(c.Request().Context(), docID, body.Status, claimUserID(c), body.RejectionReason); err != nil {
+	// The outcome is applied to the document itself (§14.4 Document.Approve /
+	// Document.Reject) and the repository persists what that produced, so the
+	// rules — a rejection says why, an approval drops the previous reason — live
+	// in one place instead of being restated by every caller that reviews.
+	reviewed := document.Document{ID: docID}
+	if err := applyReview(&reviewed, body.Status, claimUserID(c), body.RejectionReason); err != nil {
+		return badRequest(c, err.Error())
+	}
+	if err := h.docs.Review(c.Request().Context(), docID,
+		reviewed.Status, *reviewed.ReviewedBy, reviewed.RejectionReason); err != nil {
 		return serverErr(c, err)
 	}
 
 	// Async: send DOC_REJECTED WA when document is rejected
-	if body.Status == "ditolak" && h.fonnte != nil && h.participants != nil {
-		go func(reason string) {
+	if body.Status == document.StatusRejected && h.fonnte != nil && h.participants != nil {
+		reason := body.RejectionReason
+		safe.Go("notifikasi dokumen ditolak", func() {
 			bgCtx := context.Background()
-			// Reload doc to get participant_id (we know it from URL param, but need participant data)
-			docs, err := h.docs.ListByParticipant(bgCtx, "")
-			_ = docs
-			_ = err
-			// Easier path: lookup the document directly to get participant
+			// The document is reloaded for its participant id; the URL only
+			// carries the document's own.
 			doc, err := h.docs.GetByID(bgCtx, docID)
 			if err != nil || doc == nil {
 				return
@@ -99,16 +200,99 @@ func (h *DocumentHandler) ReviewDocument(c echo.Context) error {
 			if err != nil {
 				return
 			}
-			portalBase := os.Getenv("PORTAL_BASE_URL")
-			if portalBase == "" {
-				portalBase = "http://localhost:3000"
-			}
+			portalBase := config.PortalBaseURL()
 			_ = h.fonnte.SendDocRejected(bgCtx, p.Phone, p.Name,
 				doc.DocumentType, reason, portalBase+"/portal/documents", p.ID)
-		}(body.RejectionReason)
+			if h.email != nil && p.Email != "" {
+				_ = h.email.SendEmailDocRejected(bgCtx, p.Email, p.Name,
+					doc.DocumentType, reason, portalBase+"/portal/documents")
+			}
+		})
+	}
+
+	// §1.5/§1.6: when a document is approved, check whether the participant has
+	// all documents approved (notify DOC_APPROVED) and whether the whole batch is
+	// ready (auto-generate the airport checklist).
+	if body.Status == document.StatusApproved {
+		safe.Go("otomasi setelah dokumen disetujui", func() {
+			h.onDocumentApproved(context.Background(), docID)
+		})
 	}
 
 	return c.JSON(http.StatusOK, ok(map[string]string{"message": "Dokumen berhasil direview"}))
+}
+
+// applyReview records the reviewer's decision on d. The status has already been
+// checked against the schema's vocabulary by the validate tag; this maps it to
+// the entity method that owns what the decision means.
+func applyReview(d *document.Document, status, reviewerID, reason string) error {
+	if status == document.StatusApproved {
+		return d.Approve(reviewerID, time.Now())
+	}
+	return d.Reject(reviewerID, reason, time.Now())
+}
+
+// onDocumentApproved runs the post-approval automation (§1.5 + §1.6).
+func (h *DocumentHandler) onDocumentApproved(ctx context.Context, docID string) {
+	doc, err := h.docs.GetByID(ctx, docID)
+	if err != nil || doc == nil {
+		return
+	}
+	p, err := h.participants.GetByID(ctx, doc.ParticipantID)
+	if err != nil {
+		return
+	}
+
+	// Notify the participant once all their documents are approved.
+	if h.allDocsApproved(ctx, p.ID) {
+		if h.fonnte != nil {
+			_ = h.fonnte.SendDocApproved(ctx, p.Phone, p.Name, p.ID)
+		}
+		if h.email != nil && p.Email != "" {
+			_ = h.email.SendEmailDocApproved(ctx, p.Email, p.Name)
+		}
+	}
+
+	// When every active participant in the batch has all documents approved, the
+	// batch is ready — generate the airport checklist (idempotent via UNIQUE).
+	if h.batchReady(ctx, p.BatchID) && h.airport != nil {
+		if err := h.airport.InitForBatch(ctx, p.BatchID); err != nil {
+			log.Printf("airport InitForBatch[%s] failed: %v", p.BatchID, err)
+		}
+	}
+}
+
+// allDocsApproved reports whether a participant has at least one document and all
+// of their documents are approved (prompt §1.5 literal interpretation).
+func (h *DocumentHandler) allDocsApproved(ctx context.Context, participantID string) bool {
+	docs, err := h.docs.ListByParticipant(ctx, participantID)
+	if err != nil || len(docs) == 0 {
+		return false
+	}
+	for _, d := range docs {
+		if d.Status != document.StatusApproved {
+			return false
+		}
+	}
+	return true
+}
+
+// batchReady reports whether every active participant in the batch has all
+// documents approved.
+func (h *DocumentHandler) batchReady(ctx context.Context, batchID string) bool {
+	pts, err := h.participants.ListByBatch(ctx, batchID)
+	if err != nil || len(pts) == 0 {
+		return false
+	}
+	for _, pt := range pts {
+		if !pt.IsActive {
+			continue
+		}
+		if !h.allDocsApproved(ctx, pt.ID) {
+			return false
+		}
+	}
+	return true
 }
 
 func (h *DocumentHandler) DeleteDocument(c echo.Context) error {
@@ -153,10 +337,7 @@ func (h *DocumentHandler) ListAllCountryRequirements(c echo.Context) error {
 func (h *DocumentHandler) CreateCountryRequirement(c echo.Context) error {
 	var req document.CountryRequirement
 	if err := bindJSON(c, &req); err != nil {
-		return badRequest(c, "format tidak valid")
-	}
-	if req.CountryCode == "" || req.DocumentType == "" {
-		return badRequest(c, "country_code dan document_type harus diisi")
+		return invalidPayload(c, err, "country_code dan document_type harus diisi")
 	}
 	if err := h.reqs.Create(c.Request().Context(), &req); err != nil {
 		return serverErr(c, err)
@@ -167,7 +348,7 @@ func (h *DocumentHandler) CreateCountryRequirement(c echo.Context) error {
 func (h *DocumentHandler) UpdateCountryRequirement(c echo.Context) error {
 	var req document.CountryRequirement
 	if err := bindJSON(c, &req); err != nil {
-		return badRequest(c, "format tidak valid")
+		return invalidPayload(c, err, "format tidak valid")
 	}
 	req.ID = c.Param("id")
 	if err := h.reqs.Update(c.Request().Context(), &req); err != nil {

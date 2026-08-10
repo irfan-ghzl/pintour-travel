@@ -2,12 +2,14 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, CheckCircle, Eye, XCircle, FileText } from 'lucide-react'
 import toast from 'react-hot-toast'
-import api from '../../utils/api'
+import api, { openSignedFile } from '../../utils/api'
+import { formatDate } from '../../utils/date'
 import type { Invoice, InvoiceStatus, PaginatedResponse, CreateInvoiceRequest, PaymentProof } from '../../types'
 
 const STATUS_COLORS: Record<InvoiceStatus, string> = {
   diterbitkan: 'bg-blue-100 text-blue-700',
   menunggu_bayar: 'bg-yellow-100 text-yellow-700',
+  menunggu_konfirmasi_gateway: 'bg-amber-100 text-amber-700',
   dibayar: 'bg-purple-100 text-purple-700',
   lunas: 'bg-emerald-100 text-emerald-700',
 }
@@ -67,7 +69,7 @@ export default function AdminInvoicesPage() {
 
       {/* Status filter */}
       <div className="flex gap-2 flex-wrap">
-        {(['', 'diterbitkan', 'menunggu_bayar', 'dibayar', 'lunas'] as const).map((s) => (
+        {(['', 'diterbitkan', 'menunggu_bayar', 'menunggu_konfirmasi_gateway', 'dibayar', 'lunas'] as const).map((s) => (
           <button
             key={s}
             onClick={() => { setStatusFilter(s); setPage(1) }}
@@ -115,10 +117,10 @@ export default function AdminInvoicesPage() {
                   Rp {inv.amount.toLocaleString('id-ID')}
                 </td>
                 <td className="px-4 py-3 text-gray-600 text-xs">
-                  {new Date(inv.due_date).toLocaleDateString('id-ID')}
+                  {formatDate(inv.due_date)}
                 </td>
                 <td className="px-4 py-3">
-                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLORS[inv.status]}`}>
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLORS[inv.status] ?? 'bg-gray-100 text-gray-700'}`}>
                     {inv.status.replace('_', ' ')}
                   </span>
                 </td>
@@ -270,7 +272,7 @@ function InvoiceDetailModal({
           <p><span className="font-medium">WA:</span> {invoice.participant_phone}</p>
           <p><span className="font-medium">Paket:</span> {invoice.package_name}</p>
           <p><span className="font-medium">Jumlah:</span> Rp {invoice.amount.toLocaleString('id-ID')}</p>
-          <p><span className="font-medium">Jatuh Tempo:</span> {new Date(invoice.due_date).toLocaleDateString('id-ID')}</p>
+          <p><span className="font-medium">Jatuh Tempo:</span> {formatDate(invoice.due_date)}</p>
           <p><span className="font-medium">Status:</span> {invoice.status}</p>
           {invoice.confirmed_at && (
             <p><span className="font-medium">Dikonfirmasi:</span> {new Date(invoice.confirmed_at).toLocaleDateString('id-ID')}</p>
@@ -306,14 +308,16 @@ function InvoiceDetailModal({
                     <p className="text-red-600 mt-1">Catatan admin: {p.review_notes}</p>
                   )}
                   <div className="flex items-center gap-2 mt-2">
-                    <a
-                      href={p.file_path}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                    <button
+                      onClick={() =>
+                        openSignedFile('payment_proof', p.id, p.file_path).catch(() =>
+                          toast.error('Gagal membuka bukti transfer'),
+                        )
+                      }
                       className="px-2 py-1 border rounded text-xs hover:bg-gray-50"
                     >
                       Lihat Bukti
-                    </a>
+                    </button>
                     {p.status === 'menunggu' && (
                       <>
                         <button

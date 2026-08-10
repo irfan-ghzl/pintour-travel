@@ -25,6 +25,7 @@ import (
 func main() {
 	_ = godotenv.Load()
 	fresh := flag.Bool("fresh", false, "Hapus semua data sebelum insert (DANGEROUS)")
+	sched := flag.Bool("sched", false, "Tambah data edge-case untuk uji scheduler §2 (perlu seed normal lebih dulu)")
 	flag.Parse()
 
 	dsn := os.Getenv("DATABASE_URL")
@@ -37,6 +38,11 @@ func main() {
 	must(db.Ping(), "ping db")
 
 	ctx := context.Background()
+
+	if *sched {
+		seedSchedulerEdgeCases(ctx, db)
+		return
+	}
 
 	if *fresh {
 		fmt.Println("🗑️  Wiping all data (fresh mode)...")
@@ -612,6 +618,101 @@ func insertWANotif(ctx context.Context, db *sql.DB, phone, name, msgType, conten
 			reference_id, reference_type, status, sent_at, created_at)
 		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
 		phone, name, msgType, content, refID, refType, status, sentAt)
+}
+
+// seedSchedulerEdgeCases inserts backdated/edge-case rows so the §2 scheduler
+// jobs actually have something to act on. Requires the normal seed to have run
+// (it reuses an existing konsultan, admin, and package). Idempotent: it cleans
+// up its own previous rows (phone 62999*, invoice INV-SCHED-*, batch marker).
+func seedSchedulerEdgeCases(ctx context.Context, db *sql.DB) {
+	// Reference IDs from the normal seed.
+	var konsultanID, konsultanPhone, adminID, pkgID string
+	err := db.QueryRowContext(ctx,
+		`SELECT id, COALESCE(phone,'') FROM users WHERE role='konsultan' AND is_active LIMIT 1`,
+	).Scan(&konsultanID, &konsultanPhone)
+	if err != nil {
+		log.Fatalf("tidak ada konsultan — jalankan `go run ./cmd/seed-demo` dulu: %v", err)
+	}
+	if err := db.QueryRowContext(ctx,
+		`SELECT id FROM users WHERE role IN ('super_admin','admin') LIMIT 1`).Scan(&adminID); err != nil {
+		log.Fatalf("tidak ada admin: %v", err)
+	}
+	if err := db.QueryRowContext(ctx,
+		`SELECT id FROM packages ORDER BY created_at LIMIT 1`).Scan(&pkgID); err != nil {
+		log.Fatalf("tidak ada package: %v", err)
+	}
+
+	fmt.Println("🧹 Membersihkan edge-case lama...")
+	for _, q := range []string{
+		`DELETE FROM wa_notifications WHERE recipient_phone LIKE '62999%'`,
+		`DELETE FROM payment_proofs WHERE invoice_id IN (SELECT id FROM invoices WHERE invoice_number LIKE 'INV-SCHED-%')`,
+		`DELETE FROM invoices WHERE invoice_number LIKE 'INV-SCHED-%'`,
+		`DELETE FROM documents WHERE participant_id IN (SELECT id FROM participants WHERE phone LIKE '62999%')`,
+		`DELETE FROM participants WHERE phone LIKE '62999%'`,
+		`DELETE FROM leads WHERE phone LIKE '62999%'`,
+		`DELETE FROM package_batches WHERE wa_group_link='__SCHED__'`,
+	} {
+		if _, err := db.ExecContext(ctx, q); err != nil {
+			log.Printf("cleanup: %v", err)
+		}
+	}
+
+	// 1) Near-full batch (quota 5, 5 deal leads) → checkBatchQuota (§2.4).
+	var schedBatch string
+	must(db.QueryRowContext(ctx, `
+		INSERT INTO package_batches (id, package_id, departure_date, return_date, quota,
+			price_single, price_double, price_triple, status, wa_group_link, created_at, updated_at)
+		VALUES (gen_random_uuid(), $1, NOW()+INTERVAL '40 days', NOW()+INTERVAL '48 days', 5,
+			20000000, 18000000, 17000000, 'tersedia', '__SCHED__', NOW(), NOW())
+		RETURNING id`, pkgID).Scan(&schedBatch), "insert sched batch")
+	for i := 1; i <= 5; i++ {
+		_, err := db.ExecContext(ctx, `
+			INSERT INTO leads (id, name, phone, package_id, batch_id, pax, source, status,
+				assigned_to, consent_given, created_at, updated_at)
+			VALUES (gen_random_uuid(), $1, $2, $3, $4, 1, 'organic', 'deal', $5, true, NOW(), NOW())`,
+			fmt.Sprintf("[SCHED] Deal %d", i), fmt.Sprintf("629990%02d", i), pkgID, schedBatch, konsultanID)
+		must(err, "insert deal lead")
+	}
+
+	// 2) Stale lead: baru, 26 jam, ada konsultan ber-nomor → checkStaleLeads (§2.1).
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO leads (id, name, phone, package_id, pax, source, status, assigned_to,
+			consent_given, created_at, updated_at)
+		VALUES (gen_random_uuid(), '[SCHED] Stale Lead', '62999010', $1, 1, 'organic', 'baru', $2,
+			true, NOW()-INTERVAL '26 hours', NOW()-INTERVAL '26 hours')`, pkgID, konsultanID)
+	must(err, "insert stale lead")
+
+	// 3) Old lead: dihubungi, updated_at 31 hari → expireLeads (§2.2).
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO leads (id, name, phone, package_id, pax, source, status, assigned_to,
+			consent_given, created_at, updated_at)
+		VALUES (gen_random_uuid(), '[SCHED] Old Lead', '62999011', $1, 1, 'organic', 'dihubungi', $2,
+			true, NOW()-INTERVAL '40 days', NOW()-INTERVAL '31 days')`, pkgID, konsultanID)
+	must(err, "insert old lead")
+
+	// 4) Overdue invoice: participant + invoice due 2 hari lalu → expireInvoices (§2.3).
+	var schedPax string
+	must(db.QueryRowContext(ctx, `
+		INSERT INTO participants (id, batch_id, name, phone, email, room_type, portal_password,
+			is_active, created_at, updated_at)
+		VALUES (gen_random_uuid(), $1, '[SCHED] Overdue Peserta', '62999020', 'overdue@sched.test',
+			'double', 'x', true, NOW(), NOW())
+		RETURNING id`, schedBatch).Scan(&schedPax), "insert sched participant")
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO invoices (id, invoice_number, participant_id, batch_id, amount, due_date,
+			status, issued_by, created_at, updated_at)
+		VALUES (gen_random_uuid(), 'INV-SCHED-0001', $1, $2, 18000000, (NOW()-INTERVAL '2 days')::date,
+			'menunggu_bayar', $3, NOW()-INTERVAL '10 days', NOW()-INTERVAL '10 days')`,
+		schedPax, schedBatch, adminID)
+	must(err, "insert overdue invoice")
+
+	fmt.Println("✅ Edge-case scheduler dibuat:")
+	fmt.Println("   • 1 batch kuota 5 + 5 leads 'deal' (0% sisa)  → checkBatchQuota")
+	fmt.Println("   • 1 lead 'baru' umur 26 jam (ada konsultan)   → checkStaleLeads")
+	fmt.Println("   • 1 lead 'dihubungi' updated 31 hari lalu     → expireLeads")
+	fmt.Println("   • 1 invoice 'menunggu_bayar' jatuh tempo H-2  → expireInvoices")
+	fmt.Println("\nJalankan: go run ./cmd/run-jobs            (semua job)")
+	fmt.Println("     atau: go run ./cmd/run-jobs -job batch-quota")
 }
 
 func printSummary(ctx context.Context, db *sql.DB) {

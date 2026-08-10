@@ -56,7 +56,7 @@ func (h *TourLeaderHandler) GetByUser(c echo.Context) error {
 func (h *TourLeaderHandler) Upsert(c echo.Context) error {
 	var tl domainUser.TourLeader
 	if err := bindJSON(c, &tl); err != nil {
-		return badRequest(c, "format tidak valid")
+		return invalidPayload(c, err, "format tidak valid")
 	}
 	tl.UserID = c.Param("user_id")
 

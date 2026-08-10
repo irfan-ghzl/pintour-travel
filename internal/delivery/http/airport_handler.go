@@ -8,26 +8,75 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	pkgsvc "github.com/irfan-ghzl/pintour-travel/internal/application/package"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/airport"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/notification"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
+	domainUser "github.com/irfan-ghzl/pintour-travel/internal/domain/user"
+	"github.com/irfan-ghzl/pintour-travel/internal/safe"
 	"github.com/irfan-ghzl/pintour-travel/internal/service"
 )
 
 type AirportHandler struct {
 	repo         airport.Repository
 	participants participant.Repository
-	fonnte       *service.FonnteService
-	pdf          *service.PDFService
+	// packages resolves the batch a report is about: FR-AIR-06 wants the real
+	// package name, departure date and assigned tour leader, and the checklist
+	// rows know none of those.
+	packages    *pkgsvc.Service
+	tourLeaders domainUser.TourLeaderRepository
+	fonnte      *service.FonnteService
+	pdf         *service.PDFService
 }
 
 func NewAirportHandler(
 	repo airport.Repository,
 	participants participant.Repository,
+	packages *pkgsvc.Service,
+	tourLeaders domainUser.TourLeaderRepository,
 	fonnte *service.FonnteService,
 	pdf *service.PDFService,
 ) *AirportHandler {
-	return &AirportHandler{repo: repo, participants: participants, fonnte: fonnte, pdf: pdf}
+	return &AirportHandler{
+		repo: repo, participants: participants, packages: packages,
+		tourLeaders: tourLeaders, fonnte: fonnte, pdf: pdf,
+	}
+}
+
+// batchHeading is the part of a post-handling report that describes the trip
+// rather than the handling: what it was, when it left, and who was responsible.
+type batchHeading struct {
+	packageName    string
+	departureDate  string
+	tourLeaderName string
+}
+
+// resolveBatchHeading reads the report's heading from the batch.
+//
+// The report used to build it from the checklist rows: the batch name was the
+// first eight characters of a UUID, the departure date was never set at all, and
+// the tour leader was whoever last touched a checkbox — so a report handed to
+// management named the wrong person for the batch's accountability.
+func (h *AirportHandler) resolveBatchHeading(ctx context.Context, batchID string) batchHeading {
+	heading := batchHeading{packageName: "Batch " + batchID, tourLeaderName: "—"}
+	if h.packages == nil {
+		return heading
+	}
+	batch, err := h.packages.GetBatch(ctx, batchID)
+	if err != nil {
+		return heading
+	}
+	heading.departureDate = batch.DepartureDate.Format("02 January 2006")
+	if pkg, err := h.packages.GetPackage(ctx, batch.PackageID); err == nil {
+		heading.packageName = pkg.Name
+	}
+	// The leader ASSIGNED to the batch, not the last pair of hands on it.
+	if batch.TourLeaderID != nil && h.tourLeaders != nil {
+		if tl, err := h.tourLeaders.GetByUserID(ctx, *batch.TourLeaderID); err == nil && tl.Name != "" {
+			heading.tourLeaderName = tl.Name
+		}
+	}
+	return heading
 }
 
 // ListChecklist godoc
@@ -47,7 +96,10 @@ func (h *AirportHandler) ListChecklist(c echo.Context) error {
 	if v := c.QueryParam("status"); v != "" {
 		f.Status = &v
 	}
-	_ = h.repo.InitForBatch(c.Request().Context(), batchID)
+	// No InitForBatch here. This is a read, and the dashboard polls it every ten
+	// seconds — so one open tab used to run a write across every participant of
+	// the batch six times a minute, with the error discarded. Initialisation is
+	// now an explicit action (InitChecklist).
 	list, err := h.repo.ListByBatch(c.Request().Context(), f)
 	if err != nil {
 		return serverErr(c, err)
@@ -116,6 +168,33 @@ func (h *AirportHandler) UpdatePassport(c echo.Context) error {
 	return c.JSON(http.StatusOK, ok(nil))
 }
 
+// InitChecklist godoc
+// @Summary      Siapkan baris checklist untuk seluruh peserta batch
+// @Tags         airport
+// @Security     BearerAuth
+// @Accept       json
+// @Success      200 {object} map[string]interface{}
+// @Router       /admin/airport/checklist/init [post]
+//
+// Initialisation moved here out of the checklist listing. It is idempotent
+// (ON CONFLICT DO NOTHING), so calling it when the handling desk opens is safe —
+// what was not safe was doing it on a read the dashboard polls every ten
+// seconds, and discarding the error on top.
+func (h *AirportHandler) InitChecklist(c echo.Context) error {
+	var body struct {
+		BatchID string `json:"batch_id" validate:"required"`
+	}
+	if err := bindJSON(c, &body); err != nil {
+		return invalidPayload(c, err, "batch_id harus diisi")
+	}
+	if err := h.repo.InitForBatch(c.Request().Context(), body.BatchID); err != nil {
+		return serverErr(c, err)
+	}
+	return c.JSON(http.StatusOK, ok(map[string]string{
+		"message": "Checklist bandara siap untuk batch ini",
+	}))
+}
+
 // GetReport returns a JSON summary report for a batch (FR-AIR-06).
 func (h *AirportHandler) GetReport(c echo.Context) error {
 	batchID := c.QueryParam("batch_id")
@@ -154,10 +233,15 @@ func (h *AirportHandler) GetReportPDF(c echo.Context) error {
 	if err != nil {
 		return serverErr(c, err)
 	}
-	progress, _ := h.repo.GetBatchProgress(c.Request().Context(), batchID)
+	// A report that silently reports zeros is worse than one that fails: the
+	// tour leader would hand it over believing it. FR-AIR-06 wants pax counts,
+	// so a missing summary is an error, not a blank.
+	progress, err := h.repo.GetBatchProgress(c.Request().Context(), batchID)
+	if err != nil {
+		return serverErr(c, err)
+	}
 
 	rows := make([]service.AirportRow, 0, len(list))
-	tourLeaderName := "—"
 	var startedAt, finishedAt *time.Time
 	considerTime := func(t *time.Time) {
 		if t == nil {
@@ -185,24 +269,17 @@ func (h *AirportHandler) GetReportPDF(c echo.Context) error {
 			TicketAt:        fmtTime(cl.TicketDistributedAt),
 			PassportAt:      fmtTime(cl.PassportReturnedAt),
 		})
-		if cl.HandledByName != nil && *cl.HandledByName != "" {
-			tourLeaderName = *cl.HandledByName
-		}
 		considerTime(cl.BaggageCheckedAt)
 		considerTime(cl.TicketDistributedAt)
 		considerTime(cl.PassportReturnedAt)
 	}
 
-	batchName := batchID[:8]
-	departureDate := ""
-	if len(list) > 0 {
-		batchName = "Batch " + batchName
-	}
+	heading := h.resolveBatchHeading(c.Request().Context(), batchID)
 
 	data := service.AirportReportData{
-		BatchName:      batchName,
-		DepartureDate:  departureDate,
-		TourLeaderName: tourLeaderName,
+		BatchName:      heading.packageName,
+		DepartureDate:  heading.departureDate,
+		TourLeaderName: heading.tourLeaderName,
 		TotalPax:       progress.TotalPax,
 		DoneCount:      progress.DoneCount,
 		PendingCount:   progress.PendingCount,
@@ -230,14 +307,14 @@ func (h *AirportHandler) GetReportPDF(c echo.Context) error {
 // @Router       /admin/airport/confirm-departure [post]
 func (h *AirportHandler) ConfirmDeparture(c echo.Context) error {
 	var body struct {
-		BatchID      string `json:"batch_id"`
-		GatherPoint  string `json:"gather_point"`
-		GatherTime   string `json:"gather_time"`
-		Gate         string `json:"gate"`
-		CheckinTime  string `json:"checkin_time"`
+		BatchID     string `json:"batch_id" validate:"required"`
+		GatherPoint string `json:"gather_point"`
+		GatherTime  string `json:"gather_time"`
+		Gate        string `json:"gate"`
+		CheckinTime string `json:"checkin_time"`
 	}
-	if err := bindJSON(c, &body); err != nil || body.BatchID == "" {
-		return badRequest(c, "batch_id harus diisi")
+	if err := bindJSON(c, &body); err != nil {
+		return invalidPayload(c, err, "batch_id harus diisi")
 	}
 
 	// Get all participants in this batch
@@ -253,7 +330,7 @@ func (h *AirportHandler) ConfirmDeparture(c echo.Context) error {
 	}
 
 	// Send WA blast in background
-	go func() {
+	safe.Go("blast WA konfirmasi keberangkatan", func() {
 		bgCtx := context.Background()
 		for _, p := range pts {
 			msg := fmt.Sprintf(
@@ -277,7 +354,7 @@ func (h *AirportHandler) ConfirmDeparture(c echo.Context) error {
 				notification.TypeDepartureConfirm, msg, &body.BatchID, &refType)
 			time.Sleep(time.Second)
 		}
-	}()
+	})
 
 	return c.JSON(http.StatusOK, ok(map[string]interface{}{
 		"message":      fmt.Sprintf("WA konfirmasi dikirim ke %d peserta", len(pts)),

@@ -1,41 +1,62 @@
 package service
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/irfan-ghzl/pintour-travel/internal/domain/calendar"
 )
 
-func TestFormatRupiah(t *testing.T) {
-	cases := []struct {
-		in   float64
-		want string
-	}{
-		{0, "0"},
-		{100, "100"},
-		{1000, "1.000"},
-		{1500000, "1.500.000"},
-		{25000000, "25.000.000"},
-		{1234567890, "1.234.567.890"},
+// The rupiah formatter and the title-caser moved to internal/format, tested
+// once there for every caller instead of once per package that copied them.
+
+// Every character these templates actually contain has a cp1252 byte, and the
+// document's translator produces it. The bullets in the briefing's packing
+// list, the mid-dot in its header, the copyright in both footers, and the em
+// dash the airport report prints for a step nobody has done — each used to
+// reach the page as two or three replacement glyphs.
+func TestDocTranslatesToCoreFontEncoding(t *testing.T) {
+	d := newDoc("P", 20, 20, 20)
+	cases := map[string]byte{
+		"•": 0x95, // briefing packing list
+		"·": 0xb7, // briefing header separator
+		"©": 0xa9, // footers
+		"—": 0x97, // airport report, step not done
+		"ï": 0xef, // accented participant name
+		"é": 0xe9,
 	}
-	for _, c := range cases {
-		got := formatRupiah(c.in)
-		if got != c.want {
-			t.Errorf("formatRupiah(%v) = %q, want %q", c.in, got, c.want)
+	for in, want := range cases {
+		got := d.tr(in)
+		if len(got) != 1 || got[0] != want {
+			t.Errorf("tr(%q) = % x, want %02x", in, got, want)
 		}
 	}
 }
 
-func TestTitelize(t *testing.T) {
-	cases := map[string]string{
-		"single": "Single",
-		"double": "Double",
-		"triple": "Triple",
-		"":       "",
+// The writer applies the translation, so text reaches the page encoded whether
+// or not whoever wrote the line remembered to ask.
+func TestDocWriterTranslatesText(t *testing.T) {
+	d := newDoc("P", 20, 20, 20)
+	d.SetCompression(false) // so the page's text is readable in the output
+	d.SetFont("Helvetica", "", 10)
+	d.Cell(0, 6, "Rafi Rahmadhanï")
+	d.CellFormat(0, 6, "Total • Rp 1", "", 1, "L", false, 0, "")
+	d.MultiCell(0, 6, "© Pintour", "", "L", false)
+
+	var buf bytes.Buffer
+	if err := d.Output(&buf); err != nil {
+		t.Fatalf("Output: %v", err)
 	}
-	for in, want := range cases {
-		if got := titelize(in); got != want {
-			t.Errorf("titelize(%q) = %q, want %q", in, got, want)
+	for _, raw := range []string{"ï", "•", "©"} {
+		if bytes.Contains(buf.Bytes(), []byte(raw)) {
+			t.Errorf("dokumen memuat %q sebagai UTF-8 mentah — penulis tidak menerjemahkan", raw)
+		}
+	}
+	for _, want := range []byte{0xef, 0x95, 0xa9} {
+		if !bytes.Contains(buf.Bytes(), []byte{want}) {
+			t.Errorf("dokumen tidak memuat byte cp1252 %02x", want)
 		}
 	}
 }
@@ -45,7 +66,7 @@ func TestGenerateInvoice(t *testing.T) {
 	data := InvoiceData{
 		InvoiceNumber:    "INV-202605-0001",
 		IssuedAt:         time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC),
-		DueDate:          time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+		DueDate:          calendar.New(2026, time.June, 15),
 		ParticipantName:  "Budi Hartono",
 		ParticipantPhone: "628123456789",
 		PackageName:      "Umroh Plus Istanbul 12 Hari",

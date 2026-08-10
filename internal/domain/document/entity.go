@@ -1,15 +1,42 @@
 package document
 
-import "time"
+import (
+	"encoding/json"
+	"errors"
+	"strings"
+	"time"
+)
+
+// ErrRejectionReasonRequired is returned when a document is rejected without
+// saying why. The participant has to re-upload; a rejection with no reason
+// tells them nothing about what to fix.
+var ErrRejectionReasonRequired = errors.New("alasan penolakan harus diisi")
+
+// Document review outcomes. Keep in sync with the documents_status_check
+// constraint in db/migrations/003_prd_schema.sql.
+const (
+	StatusPending  = "menunggu"
+	StatusApproved = "disetujui"
+	StatusRejected = "ditolak"
+)
+
+// Types lists every document kind a participant may upload. Keep in sync with
+// the documents_document_type_check constraint in
+// db/migrations/003_prd_schema.sql.
+var Types = []string{"passport", "ktp", "rekening_koran", "visa_support", "lainnya"}
 
 // Document is a file uploaded by a participant.
+//
+// The validate tags apply when an upload request binds into this type
+// (PRD §19.3); both vocabularies mirror the documents_document_type_check and
+// documents_status_check constraints in db/migrations/003_prd_schema.sql.
 type Document struct {
 	ID              string     `json:"id"`
 	ParticipantID   string     `json:"participant_id"`
-	DocumentType    string     `json:"document_type"`
-	FilePath        string     `json:"file_path"`
-	FileName        string     `json:"file_name"`
-	Status          string     `json:"status"`
+	DocumentType    string     `json:"document_type" validate:"required,document_type"`
+	FilePath        string     `json:"file_path" validate:"required"`
+	FileName        string     `json:"file_name" validate:"required"`
+	Status          string     `json:"status" validate:"omitempty,oneof=menunggu disetujui ditolak"`
 	RejectionReason string     `json:"rejection_reason"`
 	ReviewedBy      *string    `json:"reviewed_by,omitempty"`
 	UploadedAt      time.Time  `json:"uploaded_at"`
@@ -18,19 +45,106 @@ type Document struct {
 	ParticipantName string `json:"participant_name,omitempty"`
 }
 
+// Approve records reviewerID accepting the document at time at (§14.4).
+//
+// A document approved after an earlier rejection loses that rejection's reason:
+// it no longer applies, and leaving it behind is how a participant ends up
+// looking at an approved document that still says what was wrong with it.
+func (d *Document) Approve(reviewerID string, at time.Time) error {
+	if d == nil {
+		return errors.New("dokumen tidak boleh kosong")
+	}
+	if reviewerID == "" {
+		return errors.New("peninjau harus diisi")
+	}
+	d.Status = StatusApproved
+	d.RejectionReason = ""
+	d.ReviewedBy = &reviewerID
+	d.ReviewedAt = &at
+	return nil
+}
+
+// Reject records reviewerID refusing the document at time at, with the reason
+// the participant is shown (§14.4).
+func (d *Document) Reject(reviewerID, reason string, at time.Time) error {
+	if d == nil {
+		return errors.New("dokumen tidak boleh kosong")
+	}
+	if reviewerID == "" {
+		return errors.New("peninjau harus diisi")
+	}
+	if strings.TrimSpace(reason) == "" {
+		return ErrRejectionReasonRequired
+	}
+	d.Status = StatusRejected
+	d.RejectionReason = reason
+	d.ReviewedBy = &reviewerID
+	d.ReviewedAt = &at
+	return nil
+}
+
 // CountryRequirement defines documents needed for a destination country.
 type CountryRequirement struct {
 	ID           string    `json:"id"`
-	CountryCode  string    `json:"country_code"`
-	CountryName  string    `json:"country_name"`
-	DocumentType string    `json:"document_type"`
+	CountryCode  string    `json:"country_code" validate:"required,max=5"`
+	CountryName  string    `json:"country_name" validate:"required"`
+	DocumentType string    `json:"document_type" validate:"required,document_type"`
 	IsRequired   bool      `json:"is_required"`
 	Description  string    `json:"description"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 
 // Filter for listing documents.
+//
+// Page/PerPage were the only list filter in the system without them: the review
+// page fetched every document ever uploaded to show twenty, and the dashboard
+// fetched all of them to count them.
 type Filter struct {
 	ParticipantID *string
 	Status        *string
+	Page          int
+	PerPage       int
 }
+
+// TODO(ocr-v2.0-F3): OCRResult — aktifkan ketika GCP Vision billing on.
+// OCRResult is the stored output of auto-OCR for a document (v2.0 F3).
+type OCRResult struct {
+	ID               string          `json:"id"`
+	DocumentID       string          `json:"document_id"`
+	ExtractedData    json.RawMessage `json:"extracted_data"`
+	Confidence       float64         `json:"confidence"`
+	ValidationPassed bool            `json:"validation_passed"`
+	ValidationNotes  string          `json:"validation_notes"`
+	CreatedAt        time.Time       `json:"created_at"`
+}
+
+// StatusSummary is how far along one participant's paperwork is: every document
+// they have, grouped by status. It answers the reviewer's question — is this
+// person nearly done? — which the rows on any one page cannot.
+type StatusSummary struct {
+	Total     int `json:"total"`
+	Menunggu  int `json:"menunggu"`
+	Disetujui int `json:"disetujui"`
+	Ditolak   int `json:"ditolak"`
+}
+
+// Add counts one document towards the summary.
+func (s *StatusSummary) Add(status string) { s.AddN(status, 1) }
+
+// AddN counts n documents of one status, which is the shape an aggregate query
+// returns them in.
+func (s *StatusSummary) AddN(status string, n int) {
+	s.Total += n
+	switch status {
+	case StatusApproved:
+		s.Disetujui += n
+	case StatusRejected:
+		s.Ditolak += n
+	case StatusPending:
+		s.Menunggu += n
+	}
+}
+
+// Complete reports whether every document the participant has is approved —
+// and that they have at least one, since nobody with no documents is done.
+func (s StatusSummary) Complete() bool { return s.Total > 0 && s.Disetujui == s.Total }

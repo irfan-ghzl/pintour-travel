@@ -1,7 +1,6 @@
 package httpdelivery
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 
@@ -33,7 +32,7 @@ func NewPackageHandler(svc *pkgsvc.Service) *PackageHandler { return &PackageHan
 func (h *PackageHandler) ListPackages(c echo.Context) error {
 	f := domainPkg.Filter{
 		Page:    queryInt(c, "page", 1),
-		PerPage: queryInt(c, "per_page", 20),
+		PerPage: queryPageSize(c, "per_page", 20),
 	}
 	active := true
 	f.IsActive = &active
@@ -109,7 +108,7 @@ func (h *PackageHandler) GetPackageBySlug(c echo.Context) error {
 func (h *PackageHandler) AdminListPackages(c echo.Context) error {
 	f := domainPkg.Filter{
 		Page:    queryInt(c, "page", 1),
-		PerPage: queryInt(c, "per_page", 20),
+		PerPage: queryPageSize(c, "per_page", 20),
 	}
 	if v := c.QueryParam("category"); v != "" {
 		f.Category = &v
@@ -133,7 +132,7 @@ func (h *PackageHandler) AdminListPackages(c echo.Context) error {
 func (h *PackageHandler) CreatePackage(c echo.Context) error {
 	var p domainPkg.Package
 	if err := bindJSON(c, &p); err != nil {
-		return badRequest(c, err.Error())
+		return invalidPayload(c, err, "format tidak valid")
 	}
 	userID := claimUserID(c)
 	p.CreatedBy = userID
@@ -156,7 +155,7 @@ func (h *PackageHandler) UpdatePackage(c echo.Context) error {
 		return notFound(c, "paket tidak ditemukan")
 	}
 	if err := bindJSON(c, existing); err != nil {
-		return badRequest(c, err.Error())
+		return invalidPayload(c, err, "format tidak valid")
 	}
 	existing.ID = c.Param("id")
 	if err := h.svc.UpdatePackage(c.Request().Context(), existing); err != nil {
@@ -192,10 +191,9 @@ func (h *PackageHandler) ListBatches(c echo.Context) error {
 func (h *PackageHandler) CreateBatch(c echo.Context) error {
 	var b domainPkg.PackageBatch
 	if err := bindJSON(c, &b); err != nil {
-		return badRequest(c, err.Error())
+		return invalidPayload(c, err, "format tidak valid")
 	}
-	b.PackageID = c.Param("package_id")
-	if err := h.svc.CreateBatch(c.Request().Context(), &b); err != nil {
+	if err := h.svc.CreateBatch(c.Request().Context(), c.Param("package_id"), &b); err != nil {
 		return serverErr(c, err)
 	}
 	return c.JSON(http.StatusCreated, ok(b))
@@ -207,7 +205,7 @@ func (h *PackageHandler) UpdateBatch(c echo.Context) error {
 		return notFound(c, "batch tidak ditemukan")
 	}
 	if err := bindJSON(c, b); err != nil {
-		return badRequest(c, err.Error())
+		return invalidPayload(c, err, "format tidak valid")
 	}
 	b.ID = c.Param("id")
 	if err := h.svc.UpdateBatch(c.Request().Context(), b); err != nil {
@@ -229,7 +227,7 @@ func (h *PackageHandler) ListImages(c echo.Context) error {
 func (h *PackageHandler) AddImage(c echo.Context) error {
 	var img domainPkg.PackageImage
 	if err := bindJSON(c, &img); err != nil {
-		return badRequest(c, err.Error())
+		return invalidPayload(c, err, "format tidak valid")
 	}
 	img.PackageID = c.Param("package_id")
 	if err := h.svc.AddImage(c.Request().Context(), &img); err != nil {
@@ -243,10 +241,4 @@ func (h *PackageHandler) DeleteImage(c echo.Context) error {
 		return serverErr(c, err)
 	}
 	return c.NoContent(http.StatusNoContent)
-}
-
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-func bindJSON(c echo.Context, v interface{}) error {
-	return json.NewDecoder(c.Request().Body).Decode(v)
 }

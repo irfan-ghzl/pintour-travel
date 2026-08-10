@@ -4,12 +4,29 @@
 
 # ── Go build artifacts ──────────────────────────────────────────────────────
 bin/
-*.exe                    # binari hasil compile (seed.exe, server.exe, dll)
+# Binari hasil compile (server.exe, seed.exe, seed-demo.exe, dll).
+# Catatan: git tidak mengenal komentar di ujung baris — pola dan komentar
+# harus dipisah, kalau digabung polanya ikut terbaca sebagai teks dan tak
+# pernah cocok dengan apa pun.
+*.exe
 *.test
 *.out
+*.dll
+*.so
+*.dylib
+# `go build ./cmd/x` di Linux/macOS menghasilkan binari tanpa ekstensi, jadi
+# pola *.exe di atas tidak menangkapnya sama sekali. Ketiga nama di bawah
+# adalah keluaran dari ketiga cmd/ yang ada; puluhan megabita masing-masing.
+/server
+/seed
+/seed-demo
+/run-jobs
+/pintour-server
 vendor/
 coverage.out
 coverage.html
+coverage-*.out
+coverage-*.txt
 
 # ── Node / Frontend ─────────────────────────────────────────────────────────
 web/node_modules/
@@ -57,6 +74,7 @@ txt
 txt bab 1.md
 txt daftar pustaka.md
 *.draft.md
+claude.md
 
 # Internal PRD enhancement notes (bukan PRD utama)
 docs/PRD-booking-enhancement.md

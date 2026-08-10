@@ -9,7 +9,7 @@ import (
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/invoice"
 )
 
-type invoiceRepo struct{ db *sql.DB }
+type invoiceRepo struct{ db dbtx }
 
 func NewInvoiceRepo(db *sql.DB) invoice.Repository { return &invoiceRepo{db} }
 
@@ -44,21 +44,7 @@ func (r *invoiceRepo) GetByID(ctx context.Context, id string) (*invoice.Invoice,
 		JOIN package_batches pb ON pb.id=i.batch_id
 		JOIN packages pkg ON pkg.id=pb.package_id
 		JOIN users u ON u.id=i.issued_by
-		WHERE i.id=$1`, id)
-}
-
-func (r *invoiceRepo) GetByNumber(ctx context.Context, number string) (*invoice.Invoice, error) {
-	return r.scan(ctx, `
-		SELECT i.id,i.invoice_number,i.participant_id,i.batch_id,i.amount,i.due_date,i.status,
-		COALESCE(i.pdf_path,''),COALESCE(i.notes,''),i.issued_by,i.confirmed_by,i.confirmed_at,
-		i.created_at,i.updated_at,
-		p.name,p.phone,pkg.name,u.name
-		FROM invoices i
-		JOIN participants p ON p.id=i.participant_id
-		JOIN package_batches pb ON pb.id=i.batch_id
-		JOIN packages pkg ON pkg.id=pb.package_id
-		JOIN users u ON u.id=i.issued_by
-		WHERE i.invoice_number=$1`, number)
+		WHERE i.id=$1 AND i.deleted_at IS NULL`, id)
 }
 
 func (r *invoiceRepo) scan(ctx context.Context, q string, arg interface{}) (*invoice.Invoice, error) {
@@ -76,7 +62,10 @@ func (r *invoiceRepo) scan(ctx context.Context, q string, arg interface{}) (*inv
 }
 
 func (r *invoiceRepo) List(ctx context.Context, f invoice.Filter) ([]invoice.Invoice, int, error) {
-	where := "WHERE 1=1"
+	// Soft-deleted invoices are hidden from every listing, matching every other
+	// repository. This one was the only reader that never filtered its own
+	// deleted_at column, so a deleted invoice still chased the participant.
+	where := "WHERE i.deleted_at IS NULL"
 	args := []interface{}{}
 	i := 1
 
@@ -144,6 +133,14 @@ func (r *invoiceRepo) List(ctx context.Context, f invoice.Filter) ([]invoice.Inv
 	return list, total, rows.Err()
 }
 
+// SetSnap stores the Snap token + order id for an invoice (v2.0 F1).
+func (r *invoiceRepo) SetSnap(ctx context.Context, id, snapToken, orderID string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE invoices SET snap_token=$1,midtrans_order_id=$2,updated_at=NOW() WHERE id=$3`,
+		snapToken, orderID, id)
+	return err
+}
+
 func (r *invoiceRepo) Confirm(ctx context.Context, id, confirmedBy string) error {
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE invoices SET status='lunas',confirmed_by=$1,confirmed_at=NOW(),updated_at=NOW()
@@ -169,43 +166,9 @@ func (r *invoiceRepo) NextSequence(ctx context.Context, yearMonth string) (int, 
 	return maxSeq + 1, nil
 }
 
-func (r *invoiceRepo) ListUnpaidOlderThan(ctx context.Context, days int) ([]invoice.Invoice, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT i.id,i.invoice_number,i.participant_id,i.batch_id,i.amount,i.due_date,i.status,
-		COALESCE(i.pdf_path,''),COALESCE(i.notes,''),i.issued_by,i.confirmed_by,i.confirmed_at,
-		i.created_at,i.updated_at,
-		p.name,p.phone,pkg.name,u.name
-		FROM invoices i
-		JOIN participants p ON p.id=i.participant_id
-		JOIN package_batches pb ON pb.id=i.batch_id
-		JOIN packages pkg ON pkg.id=pb.package_id
-		JOIN users u ON u.id=i.issued_by
-		WHERE i.status IN ('diterbitkan','menunggu_bayar')
-		AND i.created_at < NOW() - ($1 || ' days')::interval
-		ORDER BY i.created_at`, days)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var list []invoice.Invoice
-	for rows.Next() {
-		var inv invoice.Invoice
-		if err := rows.Scan(
-			&inv.ID, &inv.InvoiceNumber, &inv.ParticipantID, &inv.BatchID,
-			&inv.Amount, &inv.DueDate, &inv.Status, &inv.PDFPath, &inv.Notes,
-			&inv.IssuedBy, &inv.ConfirmedBy, &inv.ConfirmedAt,
-			&inv.CreatedAt, &inv.UpdatedAt,
-			&inv.ParticipantName, &inv.ParticipantPhone, &inv.PackageName, &inv.IssuedByName); err != nil {
-			return nil, err
-		}
-		list = append(list, inv)
-	}
-	return list, rows.Err()
-}
-
 // ─── PaymentProof ─────────────────────────────────────────────────────────────
 
-type paymentProofRepo struct{ db *sql.DB }
+type paymentProofRepo struct{ db dbtx }
 
 func NewPaymentProofRepo(db *sql.DB) invoice.PaymentProofRepository {
 	return &paymentProofRepo{db}
@@ -221,11 +184,35 @@ func (r *paymentProofRepo) Create(ctx context.Context, pp *invoice.PaymentProof)
 	).Scan(&pp.ID, &pp.UploadedAt)
 }
 
+// proofCols is the column list both proof queries select, in the order
+// scanProof reads them.
+const proofCols = `id,invoice_id,file_path,amount_claimed,COALESCE(notes,''),
+	status,reviewed_by,COALESCE(review_notes,''),uploaded_at,reviewed_at`
+
+// proofScanner is satisfied by both *sql.Row and *sql.Rows, so one scan serves
+// the single-row and the multi-row query.
+type proofScanner interface{ Scan(dest ...any) error }
+
+func scanProof(src proofScanner, pp *invoice.PaymentProof) error {
+	return src.Scan(&pp.ID, &pp.InvoiceID, &pp.FilePath, &pp.AmountClaimed,
+		&pp.Notes, &pp.Status, &pp.ReviewedBy, &pp.ReviewNotes,
+		&pp.UploadedAt, &pp.ReviewedAt)
+}
+
+func (r *paymentProofRepo) GetByID(ctx context.Context, id string) (*invoice.PaymentProof, error) {
+	var pp invoice.PaymentProof
+	row := r.db.QueryRowContext(ctx,
+		`SELECT `+proofCols+` FROM payment_proofs WHERE id=$1 AND deleted_at IS NULL`, id)
+	if err := scanProof(row, &pp); err != nil {
+		return nil, err
+	}
+	return &pp, nil
+}
+
 func (r *paymentProofRepo) GetByInvoice(ctx context.Context, invoiceID string) ([]invoice.PaymentProof, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT id,invoice_id,file_path,amount_claimed,COALESCE(notes,''),
-		status,reviewed_by,COALESCE(review_notes,''),uploaded_at,reviewed_at
-		FROM payment_proofs WHERE invoice_id=$1 ORDER BY uploaded_at`, invoiceID)
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+proofCols+` FROM payment_proofs WHERE invoice_id=$1 AND deleted_at IS NULL
+		 ORDER BY uploaded_at`, invoiceID)
 	if err != nil {
 		return nil, err
 	}
@@ -233,9 +220,7 @@ func (r *paymentProofRepo) GetByInvoice(ctx context.Context, invoiceID string) (
 	var list []invoice.PaymentProof
 	for rows.Next() {
 		var pp invoice.PaymentProof
-		if err := rows.Scan(&pp.ID, &pp.InvoiceID, &pp.FilePath, &pp.AmountClaimed,
-			&pp.Notes, &pp.Status, &pp.ReviewedBy, &pp.ReviewNotes,
-			&pp.UploadedAt, &pp.ReviewedAt); err != nil {
+		if err := scanProof(rows, &pp); err != nil {
 			return nil, err
 		}
 		list = append(list, pp)

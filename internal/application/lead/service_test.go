@@ -40,7 +40,10 @@ func (m *mockLeadRepo) List(_ context.Context, _ domainLead.Filter) ([]domainLea
 }
 func (m *mockLeadRepo) UpdateStatus(_ context.Context, _, _, _ string) error { return nil }
 func (m *mockLeadRepo) AssignTo(_ context.Context, _, _ string) error        { return nil }
-func (m *mockLeadRepo) MarkConverted(_ context.Context, _ string) error      { return nil }
+func (m *mockLeadRepo) MarkConverted(_ context.Context, _, _ string) error   { return nil }
+func (m *mockLeadRepo) ListStatusHistory(_ context.Context, _ string) ([]domainLead.StatusChange, error) {
+	return nil, nil
+}
 func (m *mockLeadRepo) CountActiveByConsultant(_ context.Context, cid string) (int, error) {
 	return m.counts[cid], nil
 }
@@ -70,17 +73,14 @@ func (m *mockUserRepo) GetByID(_ context.Context, id string) (*domainUser.User, 
 	}
 	return nil, errors.New("not found")
 }
-func (m *mockUserRepo) Create(_ context.Context, _ *domainUser.User) error      { return nil }
-func (m *mockUserRepo) Update(_ context.Context, _ *domainUser.User) error      { return nil }
-func (m *mockUserRepo) Deactivate(_ context.Context, _ string) error            { return nil }
+func (m *mockUserRepo) Create(_ context.Context, _ *domainUser.User) error { return nil }
+func (m *mockUserRepo) Update(_ context.Context, _ *domainUser.User) error { return nil }
+func (m *mockUserRepo) Deactivate(_ context.Context, _ string) error       { return nil }
 func (m *mockUserRepo) ListByRole(_ context.Context, _ string) ([]domainUser.User, error) {
 	return m.consultants, nil
 }
 func (m *mockUserRepo) ListKonsultan(_ context.Context) ([]domainUser.User, error) {
 	return m.consultants, nil
-}
-func (m *mockUserRepo) CountActiveleadsByConsultant(_ context.Context, _ string) (int, error) {
-	return 0, nil
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -98,7 +98,7 @@ func TestCreateLeadAutoAssignsToConsultantWithFewestLeads(t *testing.T) {
 		{ID: "c2", Name: "Konsultan B", Phone: "628222"},
 		{ID: "c3", Name: "Konsultan C", Phone: "628333"},
 	}}
-	svc := NewService(leadRepo, &mockNoteRepo{}, users, nil) // nil fonnte = no-op
+	svc := NewService(leadRepo, &mockNoteRepo{}, users, nil, nil, nil, nil) // nil portaluser/participant/fonnte/email = no-op
 
 	l := &domainLead.Lead{
 		Name: "Budi", Phone: "628123456789",
@@ -132,6 +132,9 @@ func TestCreateLeadNoConsultantsLeavesUnassigned(t *testing.T) {
 		&mockNoteRepo{},
 		&mockUserRepo{consultants: []domainUser.User{}}, // no consultants
 		nil,
+		nil,
+		nil,
+		nil,
 	)
 	l := &domainLead.Lead{Name: "Y", Phone: "628", PackageID: "p1"}
 	if err := svc.CreateLead(context.Background(), l); err != nil {
@@ -148,6 +151,9 @@ func TestCreateLeadPreservesExistingSource(t *testing.T) {
 		&mockNoteRepo{},
 		&mockUserRepo{},
 		nil,
+		nil,
+		nil,
+		nil,
 	)
 	l := &domainLead.Lead{Name: "X", Phone: "628", PackageID: "p1", Source: "meta_ads"}
 	_ = svc.CreateLead(context.Background(), l)
@@ -161,6 +167,9 @@ func TestCreateLeadCreateErrorIsReturned(t *testing.T) {
 		&mockLeadRepo{createErr: errors.New("db down")},
 		&mockNoteRepo{},
 		&mockUserRepo{},
+		nil,
+		nil,
+		nil,
 		nil,
 	)
 	err := svc.CreateLead(context.Background(), &domainLead.Lead{Name: "X", Phone: "628", PackageID: "p1"})
@@ -187,7 +196,7 @@ func TestServiceQueries(t *testing.T) {
 	}
 	svc := NewService(leadRepo, &mockNoteRepo{notes: []domainLead.Note{
 		{ID: "n1", LeadID: "l1", Note: "hello"},
-	}}, &mockUserRepo{}, nil)
+	}}, &mockUserRepo{}, nil, nil, nil, nil)
 
 	got, err := svc.GetLead(context.Background(), "l1")
 	if err != nil || got.Name != "Budi" {

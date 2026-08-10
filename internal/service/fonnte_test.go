@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -70,15 +71,38 @@ func TestFonnteTemplateHelpers(t *testing.T) {
 		{"SendLeadsWelcome", func() error { return svc.SendLeadsWelcome(ctx, "628111", "A", "Pkg", "lid") }},
 		{"SendLeadsNotifSales", func() error { return svc.SendLeadsNotifSales(ctx, "628222", "C", "L", "628111", "Pkg", "lid") }},
 		{"SendInvoice", func() error { return svc.SendInvoice(ctx, "628111", "A", "INV-1", "1000", "01 Jan", "url", "iid") }},
-		{"SendPaymentReminder", func() error { return svc.SendPaymentReminder(ctx, "628111", "A", "INV-1", "1 hari", "iid") }},
+		{"SendPaymentReminder", func() error { return svc.SendPaymentReminder(ctx, "628111", "A", "INV-1", 1, "iid") }},
 		{"SendDocRequest", func() error { return svc.SendDocRequest(ctx, "628111", "A", "Pkg", "url", "pid") }},
 		{"SendDocRejected", func() error { return svc.SendDocRejected(ctx, "628111", "A", "passport", "blur", "url", "pid") }},
-		{"SendDepartureReminder", func() error { return svc.SendDepartureReminder(ctx, "628111", "A", "Pkg", "01 Jan", "H-7", "REMINDER_H7", "pid") }},
+		{"SendDepartureReminder", func() error {
+			return svc.SendDepartureReminder(ctx, "628111", "A", "Pkg", "01 Jan", "H-7", "REMINDER_H7", "pid")
+		}},
+		{"SendPortalCredentials", func() error { return svc.SendPortalCredentials(ctx, "628111", "A", "rahasia1", "url", "pid") }},
 	}
 
 	for _, c := range calls {
 		if err := c.fn(); err != nil {
 			t.Errorf("%s returned error: %v", c.name, err)
+		}
+	}
+}
+
+// The portal credentials message is the only copy of the password that ever
+// leaves the system — portal accounts have no reset flow — so a message that
+// renders without it locks the participant out while reporting success. Asserted
+// on the rendered text because the gateway's address is not settable yet
+// (tiket 08), so nothing sent through Send can be observed.
+func TestPortalCredentialsMessageCarriesTheCredential(t *testing.T) {
+	const (
+		phone    = "628111000001"
+		password = "Xk7mQp2r"
+		portal   = "https://pintour.test/portal"
+	)
+	msg := portalCredentialsMessage("Budi", phone, password, portal)
+
+	for _, want := range []string{password, phone, portal, "Budi"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("pesan kredensial tidak memuat %q:\n%s", want, msg)
 		}
 	}
 }

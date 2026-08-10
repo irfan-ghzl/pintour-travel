@@ -2,6 +2,8 @@ package httpdelivery
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"sync"
@@ -9,10 +11,20 @@ import (
 
 	usersvc "github.com/irfan-ghzl/pintour-travel/internal/application/user"
 	domainUser "github.com/irfan-ghzl/pintour-travel/internal/domain/user"
+	"github.com/irfan-ghzl/pintour-travel/internal/safe"
 	"github.com/irfan-ghzl/pintour-travel/internal/service"
 	"github.com/labstack/echo/v4"
 	"golang.org/x/crypto/bcrypt"
 )
+
+// secureToken returns a cryptographically-random 256-bit token as hex.
+func secureToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
 
 type UserHandler struct {
 	svc    *usersvc.UserService
@@ -31,11 +43,8 @@ func NewUserHandler(svc *usersvc.UserService, repo domainUser.Repository, email 
 
 func (h *UserHandler) Login(c echo.Context) error {
 	var req usersvc.LoginRequest
-	if err := c.Bind(&req); err != nil {
-		return badRequest(c, "format tidak valid")
-	}
-	if req.Email == "" || req.Password == "" {
-		return badRequest(c, "email dan password harus diisi")
+	if err := bindJSON(c, &req); err != nil {
+		return invalidPayload(c, err, "email dan password harus diisi")
 	}
 	resp, statusCode, err := h.svc.Login(c.Request().Context(), req)
 	if err != nil {
@@ -80,15 +89,89 @@ func (h *UserHandler) Me(c echo.Context) error {
 
 // ── Reset Password (FR-USER-04) ───────────────────────────────────────────────
 
-// Simple in-memory reset token store (TTL 1 jam). Production: use Redis/DB.
-var (
-	resetTokenMu    sync.Mutex
-	resetTokenStore = map[string]resetEntry{} // token → {email, expiry}
-)
+// resetTokenTTL is how long a reset link stays redeemable.
+const resetTokenTTL = time.Hour
+
+// resetTokens holds the password-reset tokens for the process: a link issued by
+// one request is redeemed by another, so the store outlives both. Production
+// deployments would keep these in Redis or the database; in memory they are
+// only safe because the sweeper below evicts them.
+var resetTokens = newResetTokenStore()
 
 type resetEntry struct {
 	email  string
 	expiry time.Time
+}
+
+// resetTokenStore is an in-memory map of reset token → account, kept from
+// growing without bound by a periodic sweep — the same shape the rate limiter
+// uses to evict its per-IP buckets. Most tokens are never redeemed (a user asks
+// for a link, then remembers the password), so without the sweep every
+// forgot-password request would cost the process memory permanently.
+type resetTokenStore struct {
+	mu     sync.Mutex
+	tokens map[string]resetEntry
+
+	sweeperOnce sync.Once
+}
+
+func newResetTokenStore() *resetTokenStore {
+	return &resetTokenStore{tokens: map[string]resetEntry{}}
+}
+
+// issue records a token that unlocks email until expiry.
+func (s *resetTokenStore) issue(token, email string, expiry time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tokens[token] = resetEntry{email: email, expiry: expiry}
+}
+
+// consume returns the entry behind token and removes it, so a reset link works
+// exactly once. An expired entry is removed too, and reported as absent.
+func (s *resetTokenStore) consume(token string, now time.Time) (resetEntry, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry, found := s.tokens[token]
+	if !found {
+		return resetEntry{}, false
+	}
+	delete(s.tokens, token)
+	if now.After(entry.expiry) {
+		return resetEntry{}, false
+	}
+	return entry, true
+}
+
+// sweep drops every entry that expired before now and reports how many went.
+func (s *resetTokenStore) sweep(now time.Time) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dropped := 0
+	for token, entry := range s.tokens {
+		if now.After(entry.expiry) {
+			delete(s.tokens, token)
+			dropped++
+		}
+	}
+	return dropped
+}
+
+func (s *resetTokenStore) size() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.tokens)
+}
+
+// startSweeper launches the eviction loop, at most once per store however many
+// times it is called — RegisterRoutes runs once per process in a deployment but
+// once per case in the tests, and each extra sweeper would be a leaked
+// goroutine.
+func (s *resetTokenStore) startSweeper(every time.Duration) {
+	s.sweeperOnce.Do(func() {
+		safe.Every("penyapu token reset password", every, func() {
+			s.sweep(time.Now())
+		})
+	})
 }
 
 // ForgotPassword godoc
@@ -99,9 +182,11 @@ type resetEntry struct {
 // @Success      200 {object} map[string]interface{}
 // @Router       /auth/forgot-password [post]
 func (h *UserHandler) ForgotPassword(c echo.Context) error {
-	var body struct{ Email string `json:"email"` }
-	if err := bindJSON(c, &body); err != nil || body.Email == "" {
-		return badRequest(c, "email harus diisi")
+	var body struct {
+		Email string `json:"email" validate:"required,email"`
+	}
+	if err := bindJSON(c, &body); err != nil {
+		return invalidPayload(c, err, "email harus diisi")
 	}
 	u, err := h.repo.GetByEmail(c.Request().Context(), body.Email)
 	if err != nil || u == nil {
@@ -111,15 +196,16 @@ func (h *UserHandler) ForgotPassword(c echo.Context) error {
 		}))
 	}
 
-	token := fmt.Sprintf("%x", time.Now().UnixNano())
-	resetTokenMu.Lock()
-	resetTokenStore[token] = resetEntry{email: u.Email, expiry: time.Now().Add(time.Hour)}
-	resetTokenMu.Unlock()
+	token, err := secureToken()
+	if err != nil {
+		return serverErr(c, err)
+	}
+	resetTokens.issue(token, u.Email, time.Now().Add(resetTokenTTL))
 
 	resetLink := fmt.Sprintf("%s/reset-password?token=%s", h.appURL, token)
-	go func() {
+	safe.Go("kirim email reset password", func() {
 		_ = h.email.SendResetPassword(context.Background(), u.Email, u.Name, resetLink)
-	}()
+	})
 
 	return c.JSON(http.StatusOK, ok(map[string]string{
 		"message": "Jika email terdaftar, link reset password akan dikirimkan",
@@ -135,24 +221,15 @@ func (h *UserHandler) ForgotPassword(c echo.Context) error {
 // @Router       /auth/reset-password [post]
 func (h *UserHandler) ResetPassword(c echo.Context) error {
 	var body struct {
-		Token    string `json:"token"`
-		Password string `json:"password"`
+		Token    string `json:"token" validate:"required"`
+		Password string `json:"password" validate:"required,min=8"`
 	}
-	if err := bindJSON(c, &body); err != nil || body.Token == "" || body.Password == "" {
-		return badRequest(c, "token dan password baru harus diisi")
-	}
-	if len(body.Password) < 8 {
-		return badRequest(c, "password minimal 8 karakter")
+	if err := bindJSON(c, &body); err != nil {
+		return invalidPayload(c, err, "token dan password baru harus diisi")
 	}
 
-	resetTokenMu.Lock()
-	entry, found := resetTokenStore[body.Token]
-	if found {
-		delete(resetTokenStore, body.Token)
-	}
-	resetTokenMu.Unlock()
-
-	if !found || time.Now().After(entry.expiry) {
+	entry, found := resetTokens.consume(body.Token, time.Now())
+	if !found {
 		return c.JSON(http.StatusUnprocessableEntity,
 			errResponse("TOKEN_EXPIRED", "Token tidak valid atau sudah kadaluarsa"))
 	}
@@ -174,6 +251,38 @@ func (h *UserHandler) ResetPassword(c echo.Context) error {
 }
 
 // ── User Management (FR-USER-03) ──────────────────────────────────────────────
+
+// roleSuperAdmin is the only role §5.3 lets manage users — including the only
+// role that can create another super admin.
+const roleSuperAdmin = "super_admin"
+
+// isLastSuperAdmin reports whether userID is the only active super admin left.
+//
+// An organisation with no active super admin cannot get one back: creating a
+// user requires a super admin, so the state is unrecoverable through the
+// application. Both operations that could produce it — demoting and deactivating
+// — check this first.
+func (h *UserHandler) isLastSuperAdmin(ctx context.Context, userID string) (bool, error) {
+	supers, err := h.repo.ListByRole(ctx, roleSuperAdmin)
+	if err != nil {
+		return false, err
+	}
+	for _, u := range supers {
+		if u.ID != userID && u.IsActive {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// refuseLastSuperAdmin explains why the operation was refused, rather than
+// reporting a bare conflict: the caller is a super admin acting deliberately,
+// and the useful answer is what to do instead.
+func refuseLastSuperAdmin(c echo.Context, operation string) error {
+	return c.JSON(http.StatusConflict, errResponse("LAST_SUPER_ADMIN",
+		"Tidak dapat "+operation+" super admin terakhir. Sistem harus selalu punya "+
+			"minimal satu super admin aktif — angkat super admin lain lebih dulu."))
+}
 
 // ListUsers godoc
 // @Summary      Daftar pengguna sistem (FR-USER-03)
@@ -214,21 +323,18 @@ func (h *UserHandler) ListUsers(c echo.Context) error {
 // @Success      201 {object} map[string]interface{}
 // @Router       /admin/users [post]
 func (h *UserHandler) CreateUser(c echo.Context) error {
-	if claimRole(c) != "super_admin" {
+	if claimRole(c) != roleSuperAdmin {
 		return forbidden(c)
 	}
 	var body struct {
-		Name     string `json:"name"`
-		Email    string `json:"email"`
-		Password string `json:"password"`
-		Role     string `json:"role"`
-		Phone    string `json:"phone"`
+		Name     string `json:"name" validate:"required"`
+		Email    string `json:"email" validate:"required,email"`
+		Password string `json:"password" validate:"required,min=8"`
+		Role     string `json:"role" validate:"required,staff_role"`
+		Phone    string `json:"phone" validate:"omitempty,phone_id"`
 	}
 	if err := bindJSON(c, &body); err != nil {
-		return badRequest(c, "format tidak valid")
-	}
-	if body.Name == "" || body.Email == "" || body.Password == "" || body.Role == "" {
-		return badRequest(c, "nama, email, password, dan role harus diisi")
+		return invalidPayload(c, err, "nama, email, password, dan role harus diisi")
 	}
 	hashed, err := bcrypt.GenerateFromPassword([]byte(body.Password), 12)
 	if err != nil {
@@ -252,7 +358,7 @@ func (h *UserHandler) CreateUser(c echo.Context) error {
 // @Success      200 {object} map[string]interface{}
 // @Router       /admin/users/{id} [put]
 func (h *UserHandler) UpdateUser(c echo.Context) error {
-	if claimRole(c) != "super_admin" {
+	if claimRole(c) != roleSuperAdmin {
 		return forbidden(c)
 	}
 	existing, err := h.repo.GetByID(c.Request().Context(), c.Param("id"))
@@ -261,12 +367,21 @@ func (h *UserHandler) UpdateUser(c echo.Context) error {
 	}
 	var body struct {
 		Name  string `json:"name"`
-		Email string `json:"email"`
-		Role  string `json:"role"`
-		Phone string `json:"phone"`
+		Email string `json:"email" validate:"omitempty,email"`
+		Role  string `json:"role" validate:"omitempty,staff_role"`
+		Phone string `json:"phone" validate:"omitempty,phone_id"`
 	}
 	if err := bindJSON(c, &body); err != nil {
-		return badRequest(c, "format tidak valid")
+		return invalidPayload(c, err, "format tidak valid")
+	}
+	if body.Role != "" && body.Role != roleSuperAdmin && existing.Role == roleSuperAdmin {
+		last, err := h.isLastSuperAdmin(c.Request().Context(), existing.ID)
+		if err != nil {
+			return serverErr(c, err)
+		}
+		if last {
+			return refuseLastSuperAdmin(c, "menurunkan peran")
+		}
 	}
 	if body.Name != "" {
 		existing.Name = body.Name
@@ -294,10 +409,24 @@ func (h *UserHandler) UpdateUser(c echo.Context) error {
 // @Success      200 {object} map[string]interface{}
 // @Router       /admin/users/{id}/deactivate [patch]
 func (h *UserHandler) DeactivateUser(c echo.Context) error {
-	if claimRole(c) != "super_admin" {
+	if claimRole(c) != roleSuperAdmin {
 		return forbidden(c)
 	}
-	if err := h.repo.Deactivate(c.Request().Context(), c.Param("id")); err != nil {
+	ctx := c.Request().Context()
+	target, err := h.repo.GetByID(ctx, c.Param("id"))
+	if err != nil {
+		return notFound(c, "pengguna tidak ditemukan")
+	}
+	if target.Role == roleSuperAdmin {
+		last, err := h.isLastSuperAdmin(ctx, target.ID)
+		if err != nil {
+			return serverErr(c, err)
+		}
+		if last {
+			return refuseLastSuperAdmin(c, "menonaktifkan")
+		}
+	}
+	if err := h.repo.Deactivate(ctx, target.ID); err != nil {
 		return serverErr(c, err)
 	}
 	return c.JSON(http.StatusOK, ok(map[string]string{"message": "Akun berhasil dinonaktifkan"}))
@@ -311,14 +440,14 @@ func (h *UserHandler) DeactivateUser(c echo.Context) error {
 // @Success      200 {object} map[string]interface{}
 // @Router       /admin/users/{id}/reset-password [patch]
 func (h *UserHandler) ResetPasswordAdmin(c echo.Context) error {
-	if claimRole(c) != "super_admin" {
+	if claimRole(c) != roleSuperAdmin {
 		return forbidden(c)
 	}
 	var body struct {
-		Password string `json:"password"`
+		Password string `json:"password" validate:"required,min=8"`
 	}
-	if err := bindJSON(c, &body); err != nil || body.Password == "" {
-		return badRequest(c, "password baru harus diisi")
+	if err := bindJSON(c, &body); err != nil {
+		return invalidPayload(c, err, "password baru harus diisi")
 	}
 	hashed, err := bcrypt.GenerateFromPassword([]byte(body.Password), 12)
 	if err != nil {

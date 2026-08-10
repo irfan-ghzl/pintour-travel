@@ -106,6 +106,8 @@ export interface Lead {
   status: LeadStatus
   assigned_to?: string
   converted_at?: string
+  portal_user_id?: string // v2.0 F4
+  is_returning?: boolean  // v2.0 F4 — returning customer
   created_at: string
   updated_at: string
   package_name: string
@@ -119,6 +121,31 @@ export interface LeadNote {
   note: string
   created_at: string
   user_name: string
+}
+
+// LeadStatusChange is one recorded transition (FR-CRM-02). It is separate from
+// LeadNote because a note is something a consultant wrote and a status change is
+// something that happened — and only the latter knows what the previous status
+// was. changed_by is empty when the nightly job made the change; changed_by_name
+// then reads "Sistem".
+export interface LeadStatusChange {
+  id: string
+  lead_id: string
+  from_status: string
+  to_status: string
+  changed_by: string
+  changed_by_name: string
+  changed_at: string
+}
+
+// DocumentSummary counts a participant's documents across ALL of them, which is
+// what the "N of M approved" figure on the review page has to describe — not the
+// page or the status filter in front of it.
+export interface DocumentSummary {
+  total: number
+  disetujui: number
+  menunggu: number
+  ditolak: number
 }
 
 export interface CreateLeadRequest {
@@ -159,12 +186,22 @@ export interface ConvertLeadRequest {
 export interface ConvertLeadResponse {
   participant: Participant
   temp_password: string
+  reused_account: boolean // v2.0 F1 — true bila akun portal lama dipakai ulang
   message: string
 }
 
 // ─── Invoices ──��───────────────────���───────────────────────────────��──────────
 
-export type InvoiceStatus = 'diterbitkan' | 'menunggu_bayar' | 'dibayar' | 'lunas'
+// Mirrors the invoices_status_check constraint as amended by
+// db/migrations/006_v2_features.sql. menunggu_konfirmasi_gateway was missing
+// here while the backend already set it, so a participant whose payment was
+// awaiting the gateway hit an undefined lookup and the page failed to render.
+export type InvoiceStatus =
+  | 'diterbitkan'
+  | 'menunggu_bayar'
+  | 'menunggu_konfirmasi_gateway'
+  | 'dibayar'
+  | 'lunas'
 
 export interface Invoice {
   id: string
@@ -358,4 +395,6 @@ export interface PortalMeResponse {
   participant: Participant
   days_to_depart?: number
   briefing_active: boolean
+  passport_expiry?: string         // v2.0 FR-PORTAL-11 (YYYY-MM-DD)
+  passport_expiring_soon?: boolean // expired or within 6 months
 }

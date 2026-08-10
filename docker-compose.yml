@@ -38,6 +38,23 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── Tesseract OCR sidecar (v2.0 F6: self-hosted, data tidak keluar jaringan) ──
+  tesseract-api:
+    image: hertzg/tesseract-server:latest
+    container_name: pintour_tesseract
+    restart: unless-stopped
+    # Tidak expose port ke host — hanya diakses dari service `api` lewat jaringan internal.
+    expose:
+      - "8884"
+    healthcheck:
+      # 127.0.0.1, bukan localhost — wget di image ini resolve localhost ke
+      # ::1 (IPv6) duluan, tapi tesseract-server cuma listen di IPv4 0.0.0.0.
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8884/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
   # ── Go API server (PRD §18: pgx/v5 + gocron + rs/cors + validator) ──────────
   api:
     build:
@@ -53,6 +70,11 @@ services:
       REDIS_ADDR:      redis:6379
       APP_ENV:         ${APP_ENV:-production} # default production di container
       SERVER_PORT:     8080
+      OCR_ENGINE:        tesseract_local      # v2.0 F6 — OCR self-hosted
+      TESSERACT_API_URL: http://tesseract-api:8884
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     ports:
       - "8080:8080"
     depends_on:
@@ -60,6 +82,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      tesseract-api:
+        condition: service_started
 
   # ── React web app (Nginx) ─────────────────────────────────────────────────────
   web:
