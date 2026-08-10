@@ -98,7 +98,21 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-pintour}:${POSTGRES_PASSWORD:?wajib diisi di .env}@db:5432/${POSTGRES_DB:-pintour_db}?sslmode=disable
       REDIS_ADDR:     redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:?wajib diisi di .env}
-      APP_ENV:        ${APP_ENV:-production}
+      # Ditulis harfiah, bukan ${APP_ENV:-production}. Bentuk itu terbaca seolah
+      # produksi adalah bawaannya, padahal compose mengambil ${APP_ENV} dari .env
+      # — berkas yang sama yang dipakai env_file — sehingga satu baris
+      # APP_ENV=development di sana menang, diam-diam, di setiap deployment yang
+      # menyalin .env.example apa adanya.
+      #
+      # Akibatnya bukan sekadar label: Validate() langsung return nil di luar
+      # produksi, jadi seluruh pemeriksaan konfigurasi tidak berjalan dan cookie
+      # tidak Secure. Diuji pada .env repo ini, produksi menolak start dengan
+      # tiga masalah sekaligus — dua URL portal menunjuk localhost, dan
+      # MIDTRANS_SERVER_KEY terisi sementara MIDTRANS_ENV masih sandbox.
+      # Ketiganya persis yang Validate() dibuat untuk menangkap.
+      #
+      # Pengembangan lokal menurunkannya lewat docker-compose.dev.yml.
+      APP_ENV:        production
       SERVER_PORT:    8080
       OCR_ENGINE:        tesseract_local      # v2.0 F6 — OCR self-hosted
       TESSERACT_API_URL: http://tesseract-api:8884
