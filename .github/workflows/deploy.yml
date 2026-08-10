@@ -128,6 +128,13 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    # Server login ke GHCR memakai token ini untuk menarik image. Tanpa
+    # packages: read dinyatakan, izin bawaan repo yang berlaku — dan bila repo
+    # disetel read-only, kegagalannya baru muncul di langkah pull, di server,
+    # setelah build yang panjang selesai.
+    permissions:
+      contents: read
+      packages: read
     environment:
       name: production
       url: ${{ secrets.HEALTHCHECK_URL }}
