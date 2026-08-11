@@ -215,6 +215,11 @@ dokumen yang dikirim ke pihak ketiga.
 
 **Aktor:** calon pelanggan **Prasyarat:** URL publik aktif + webhook Fonnte diarahkan ke sana
 
+Webhook diatur di **Fonnte → Device → Edit → Webhook URL** — bukan menu
+tersendiri, dan itu sebabnya sering tidak ketemu. Di halaman yang sama,
+**Auto Read harus On**: dokumentasi Fonnte menyatakan webhook tidak berjalan
+sama sekali bila dibiarkan mati.
+
 > Langkah yang paling sering terlewat, dan gejalanya menyesatkan. Webhook hidup
 > di dashboard Fonnte — di luar jangkauan skrip mana pun di repo ini — jadi ia
 > **tidak ikut berubah** saat URL tunnel berganti. Kalau bot tidak membalas,

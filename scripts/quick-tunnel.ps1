@@ -116,8 +116,11 @@ $token = $token.Trim()
 
 if ($token) {
 	Write-Host ""
-	Write-Host "  Tempel ini ke dashboard Fonnte (Device -> Webhook):" -ForegroundColor Yellow
+	Write-Host "  Tempel ini di dashboard Fonnte -> Device -> Edit -> Webhook URL:" -ForegroundColor Yellow
 	Write-Host "  $url/api/v1/webhooks/fonnte?token=$token" -ForegroundColor Cyan
+	Write-Host "  Webhook bukan menu tersendiri; letaknya di dalam Edit perangkat."
+	Write-Host "  Nyalakan juga Auto Read di halaman yang sama — dokumentasi Fonnte"
+	Write-Host "  menyatakan webhook tidak jalan sama sekali bila Auto Read mati."
 	Write-Host "  Tanpa token, webhook dijawab 401 dan chatbot tidak akan membalas."
 } else {
 	Write-Host ""
