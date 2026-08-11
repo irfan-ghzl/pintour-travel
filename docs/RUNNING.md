@@ -171,6 +171,12 @@ make help
 
 ---
 
+## Mendemokan sistem
+
+[UAT.md](UAT.md) memuat 15 skenario penerimaan yang mengikuti perjalanan bisnis —
+pengunjung, lead, peserta, invoice, portal, keberangkatan — beserta jalur demo 15
+menit untuk sidang.
+
 ## Test
 
 ```bash
