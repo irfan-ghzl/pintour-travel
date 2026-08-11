@@ -21,21 +21,23 @@ import (
 func TestFonnteWebhookIgnoresItsOwnEcho(t *testing.T) {
 	h := &ChatbotHandler{} // svc nil — permintaan harus ditolak sebelum menyentuhnya
 
-	form := url.Values{
-		"device":  {"082121952655"},
-		"sender":  {"6282121952655"}, // nomor yang sama, format berbeda
-		"message": {"Halo! Terima kasih sudah menghubungi Pintour."},
-	}
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/fonnte",
-		strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	// Payload sesungguhnya, disalin dari yang dikirim Fonnte saat satu pesan uji
+	// dikirimkan. Perhatikan `sender` berisi nomor LAWAN BICARA, bukan nomor
+	// perangkat kita — itulah sebabnya membandingkan `device` dengan `sender`
+	// tidak pernah cocok, dan penjagaan versi pertama diam-diam tidak berfungsi.
+	body := `{"device":"082121952655","sender":"6287789509545",` +
+		`"message":"Halo! Terima kasih sudah menghubungi Pintour.\n\n> _Sent via fonnte.com_",` +
+		`"name":null,"pushname":null,"isgroup":false,"type":"text"}`
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/fonnte", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
 	if err := h.HandleFonnteWebhook(echo.New().NewContext(req, rec)); err != nil {
 		t.Fatalf("handler: %v", err)
 	}
 	if !strings.Contains(rec.Body.String(), "self_echo_ignored") {
-		t.Fatalf("gema dari perangkat sendiri tidak diabaikan: %s", rec.Body.String())
+		t.Fatalf("gema pesan keluar tidak diabaikan: %s", rec.Body.String())
 	}
 }
 
@@ -66,5 +68,22 @@ func TestFonnteWebhookStopsARunawayLoop(t *testing.T) {
 
 	if !strings.Contains(lastBody, "rate_limited") {
 		t.Fatalf("dua belas pesan dalam sekejap tidak memicu penjaga loop: %s", lastBody)
+	}
+}
+
+// Webhook status pengiriman datang lewat URL yang sama dan tanpa field message.
+func TestFonnteWebhookIgnoresDeliveryStatus(t *testing.T) {
+	h := &ChatbotHandler{}
+
+	body := `{"device":"082121952655","id":"172662621","state":"delivered","status":"sent"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/fonnte", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	if err := h.HandleFonnteWebhook(echo.New().NewContext(req, rec)); err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if !strings.Contains(rec.Body.String(), "ignored") {
+		t.Fatalf("webhook status pengiriman tidak diabaikan: %s", rec.Body.String())
 	}
 }

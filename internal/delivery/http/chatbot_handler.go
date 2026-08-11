@@ -48,33 +48,40 @@ func (h *ChatbotHandler) HandleFonnteWebhook(c echo.Context) error {
 		}
 	}
 
-	var phone, message, device string
+	var phone, message string
 	if strings.Contains(c.Request().Header.Get("Content-Type"), "application/json") {
 		var b struct {
 			Phone   string `json:"phone"`
 			Sender  string `json:"sender"`
 			Message string `json:"message"`
-			Device  string `json:"device"`
 		}
 		_ = bindJSON(c, &b)
-		phone, message, device = firstNonEmpty(b.Phone, b.Sender), b.Message, b.Device
+		phone, message = firstNonEmpty(b.Phone, b.Sender), b.Message
 	} else {
 		phone = firstNonEmpty(c.FormValue("sender"), c.FormValue("phone"))
 		message = c.FormValue("message")
-		device = c.FormValue("device")
 	}
 
+	// Fonnte juga mengirim webhook status pengiriman (state: sent/delivered/read)
+	// lewat URL yang sama. Semuanya tanpa field message, jadi berhenti di sini.
 	if phone == "" || message == "" {
 		return c.JSON(http.StatusOK, ok(map[string]string{"status": "ignored"}))
 	}
 
-	// Pesan yang dikirim perangkat kita sendiri diabaikan.
+	var selfEcho bool
+
+	// Gema pesan keluar kita sendiri diabaikan.
 	//
 	// Fonnte meneruskan SELURUH lalu lintas perangkat ke webhook, termasuk pesan
-	// keluar. Tanpa penjagaan ini, balasan bot kembali masuk sebagai pesan baru
-	// dan dibalas lagi — dan seterusnya. Terjadi sungguhan: 35 balasan dalam dua
-	// menit sampai tunnel dimatikan dengan tangan.
-	if device != "" && normalizePhone(device) == normalizePhone(phone) {
+	// yang baru saja kita kirim. Payload gemanya nyaris tidak bisa dibedakan dari
+	// pesan masuk sungguhan — `sender` berisi nomor LAWAN BICARA, bukan nomor
+	// perangkat kita, sehingga membandingkan `device` dengan `sender` tidak pernah
+	// cocok dan penjagaan yang terlihat masuk akal itu diam-diam tidak berfungsi.
+	// Dibuktikan dengan mengirim satu pesan uji dan membaca payload yang kembali.
+	//
+	// Yang benar-benar membedakan ada dua, dan keduanya dipakai:
+	message = stripFonnteSignature(message, &selfEcho)
+	if selfEcho || h.echoesOurLastReply(c.Request().Context(), phone, message) {
 		return c.JSON(http.StatusOK, ok(map[string]string{"status": "self_echo_ignored"}))
 	}
 
@@ -231,4 +238,50 @@ func (g *floodGuard) tripped(key string) bool {
 	}
 	c.count++
 	return c.count > g.limit
+}
+
+// fonnteSignature ditambahkan Fonnte ke setiap pesan keluar pada paket gratis.
+// Ia ikut terbawa saat pesan itu digemakan kembali ke webhook, dan karena itu
+// menjadi penanda paling langsung bahwa sebuah "pesan masuk" sebenarnya milik
+// kita sendiri.
+const fonnteSignature = "_Sent via fonnte.com_"
+
+// stripFonnteSignature membuang tanda tangan Fonnte dan melaporkan lewat echo
+// bahwa pesan ini berasal dari perangkat kita.
+func stripFonnteSignature(message string, echo *bool) string {
+	if !strings.Contains(message, fonnteSignature) {
+		return message
+	}
+	*echo = true
+	if i := strings.LastIndex(message, "\n\n>"); i >= 0 {
+		return strings.TrimSpace(message[:i])
+	}
+	return strings.TrimSpace(strings.ReplaceAll(message, fonnteSignature, ""))
+}
+
+// echoesOurLastReply melaporkan apakah pesan ini sama persis dengan balasan
+// terakhir yang kita kirim ke nomor tersebut.
+//
+// Ini lapisan yang tidak bergantung pada paket Fonnte: tanda tangan di atas
+// hilang begitu akun naik ke paket berbayar, sementara gemanya tidak. Percakapan
+// manusia yang mengulang kalimat bot kata demi kata bukan hal yang perlu
+// dilayani; membiarkannya lewat berarti mengundang kembali loop yang sama.
+func (h *ChatbotHandler) echoesOurLastReply(ctx context.Context, phone, message string) bool {
+	if h.logs == nil {
+		return false
+	}
+	logs, err := h.logs.ListByPhone(ctx, normalizePhone(phone))
+	if err != nil || len(logs) == 0 {
+		return false
+	}
+	want := strings.TrimSpace(message)
+	// Diurutkan menaik oleh repository, jadi dibaca dari belakang.
+	for i := len(logs) - 1; i >= 0; i-- {
+		if logs[i].Role != "assistant" {
+			continue
+		}
+		var noSig bool
+		return strings.TrimSpace(stripFonnteSignature(logs[i].Message, &noSig)) == want
+	}
+	return false
 }
