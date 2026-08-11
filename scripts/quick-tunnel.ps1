@@ -1,4 +1,4 @@
-# Menyalakan stack beserta Cloudflare quick tunnel, lalu menyelaraskan .env
+﻿# Menyalakan stack beserta Cloudflare quick tunnel, lalu menyelaraskan .env
 # dengan URL publik yang baru diberikan.
 #
 #   .\scripts\quick-tunnel.ps1
@@ -29,12 +29,25 @@ Write-Host "==> Menyalakan stack" -ForegroundColor Green
 docker compose @composeArgs up -d
 if (-not $?) { Write-Error "docker compose up gagal" }
 
+# cloudflared sengaja dibuat ulang, bukan dibiarkan berjalan.
+#
+# `docker compose logs` menyajikan seluruh riwayat kontainer, termasuk URL dari
+# tunnel-tunnel sebelumnya. Membaca yang pertama ketemu berarti membaca URL yang
+# sudah mati berjam-jam lalu, lalu menuliskannya ke .env dengan yakin. Kontainer
+# yang baru dibuat memulai lognya dari kosong, jadi yang terbaca hanya URL run
+# ini. Tunnel sekali pakai memang tidak punya keadaan yang perlu dipertahankan.
+docker compose @composeArgs up -d --force-recreate cloudflared
+if (-not $?) { Write-Error "gagal membuat ulang cloudflared" }
+
 Write-Host "==> Menunggu URL dari cloudflared" -ForegroundColor Green
 $url = $null
 for ($i = 1; $i -le 40; $i++) {
 	$logs = (docker compose @composeArgs logs cloudflared 2>&1) | Out-String
-	if ($logs -match 'https://[a-z0-9-]+\.trycloudflare\.com') {
-		$url = $Matches[0]
+	# Yang terakhir, bukan yang pertama: kalau toh ada sisa riwayat, URL yang
+	# hidup selalu yang paling belakang.
+	$found = [regex]::Matches($logs, 'https://[a-z0-9-]+\.trycloudflare\.com')
+	if ($found.Count -gt 0) {
+		$url = $found[$found.Count - 1].Value
 		break
 	}
 	Start-Sleep -Seconds 3
