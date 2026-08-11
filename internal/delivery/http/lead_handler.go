@@ -128,6 +128,24 @@ func (h *LeadHandler) GetLead(c echo.Context) error {
 	if err != nil {
 		return notFound(c, "leads tidak ditemukan")
 	}
+
+	// Konsultan hanya boleh membuka lead miliknya sendiri.
+	//
+	// ListLeads sudah menyaring berdasarkan assigned_to, dan penyaringan itu
+	// membuat pembatasannya tampak selesai — padahal detail dibiarkan terbuka.
+	// Ditemukan saat UAT: konsultan yang bukan pemilik memanggil endpoint ini
+	// dengan ID lead orang lain dan menerima 200 lengkap dengan nama, nomor
+	// WhatsApp, dan isi pesan calon pelanggan.
+	//
+	// Dijawab notFound, bukan forbidden, supaya balasannya tidak membedakan
+	// antara "ada tapi bukan milikmu" dan "tidak ada" — perbedaan itu sendiri
+	// sudah membocorkan ID lead mana yang terpakai.
+	if claimRole(c) == "konsultan" {
+		uid := claimUserID(c)
+		if l.AssignedTo == nil || *l.AssignedTo != uid {
+			return notFound(c, "leads tidak ditemukan")
+		}
+	}
 	notes, _ := h.svc.ListNotes(c.Request().Context(), l.ID)
 
 	// FR-CRM-03: include WA notification history linked to this lead

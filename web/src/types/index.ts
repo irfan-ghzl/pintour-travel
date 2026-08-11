@@ -157,6 +157,13 @@ export interface CreateLeadRequest {
   pax: number
   message?: string
   source?: LeadSource
+  /**
+   * Persetujuan kebijakan privasi (§25.2). Dikirim eksplisit, bukan disimpulkan
+   * dari fakta bahwa permintaannya sampai: formulir memang menolak mengirim
+   * tanpa centang, tapi yang menjadi bukti persetujuan adalah kolom di basis
+   * data — dan kolom itu ikut terbawa ke peserta saat lead dikonversi.
+   */
+  consent_given?: boolean
 }
 
 // ─── Participants ────────────────��───────────────────────��────────────────────

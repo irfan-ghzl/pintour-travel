@@ -102,7 +102,7 @@ export default function PackageDetailPage() {
     }
     setConsentError('')
     const phone = form.phone.replace(/^\+/, '').replace(/^0/, '62')
-    leadMutation.mutate({ ...form, phone, package_id: pkg!.id })
+    leadMutation.mutate({ ...form, phone, package_id: pkg!.id, consent_given: consentGiven })
   }
 
   const itinerary = Array.isArray(pkg.itinerary) ? pkg.itinerary : []
