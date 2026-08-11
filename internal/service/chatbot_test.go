@@ -201,8 +201,8 @@ func TestChatbot_PromptCarriesTheLiveCatalogue(t *testing.T) {
 // still gets a holding message instead of silence.
 func TestChatbot_FallsBackWhenTheModelFails(t *testing.T) {
 	svc, logs, wa, stub := newChatbot(t, func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusTooManyRequests)
-		_, _ = w.Write([]byte(`{"error":{"message":"rate limit"}}`))
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":{"message":"internal"}}`))
 	})
 
 	if err := svc.HandleIncomingMessage(context.Background(),
@@ -297,5 +297,33 @@ func TestChatbot_ReplaysHistoryInTheModelsVocabulary(t *testing.T) {
 	}
 	if contents[1].Role != "model" {
 		t.Errorf("giliran asisten dikirim sebagai %q, want model", contents[1].Role)
+	}
+}
+
+// Kehabisan kuota tidak dicoba ulang. Batas paket gratis dihitung per menit dan
+// Gemini menyebutkan sendiri bahwa ia baru mau dilayani puluhan detik kemudian;
+// mengulang 1,5 detik lagi pasti gagal, sementara kegagalannya tetap dihitung
+// sebagai satu permintaan. Percobaan ulang di sini menggandakan laju pemakaian
+// persis ketika lajunya yang sedang jadi masalah.
+func TestChatbot_QuotaExceededIsNotRetried(t *testing.T) {
+	svc, logs, wa, stub := newChatbot(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"message":"You exceeded your current quota"}}`))
+	})
+
+	if err := svc.HandleIncomingMessage(context.Background(),
+		"628444444444", "Ada paket umroh Desember?"); err != nil {
+		t.Fatalf("HandleIncomingMessage: %v", err)
+	}
+
+	if stub.calls() != 1 {
+		t.Errorf("panggilan ke model = %d, want 1 (kuota habis tidak diulang)", stub.calls())
+	}
+	// Pelanggan tetap dijawab; yang hilang hanya jawabannya, bukan balasannya.
+	if got := logs.replies(); len(got) != 1 || got[0] != chatbotFallbackReply {
+		t.Errorf("balasan = %v, want pesan cadangan", got)
+	}
+	if msg, _ := wa.last(t)["message"].(string); msg != chatbotFallbackReply {
+		t.Error("pesan cadangan tidak sampai ke pelanggan")
 	}
 }
