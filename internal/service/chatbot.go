@@ -155,7 +155,7 @@ type geminiContent struct {
 type geminiRequest struct {
 	SystemInstruction *geminiContent  `json:"system_instruction,omitempty"`
 	Contents          []geminiContent `json:"contents"`
-	GenerationConfig  map[string]int  `json:"generationConfig"`
+	GenerationConfig  map[string]any  `json:"generationConfig"`
 }
 
 type geminiResponse struct {
@@ -226,8 +226,23 @@ func (s *ChatbotService) generateReply(ctx context.Context, history []chatbot.Lo
 		SystemInstruction: &geminiContent{
 			Parts: []geminiPart{{Text: buildSystemPrompt(pkgs, returningInfo)}},
 		},
-		Contents:         contents,
-		GenerationConfig: map[string]int{"maxOutputTokens": 300},
+		Contents: contents,
+		GenerationConfig: map[string]any{
+			// 300 terlalu sempit untuk pertanyaan yang wajar dijawab dengan
+			// daftar — "sebutkan paketnya apa saja" terpotong di tengah kalimat.
+			// Diukur: jawaban semacam itu selesai pada ~400 token.
+			"maxOutputTokens": 700,
+
+			// Penalaran dimatikan, dan ini yang menentukan.
+			//
+			// Model seri 2.5 memakai token keluaran untuk berpikir lebih dulu, dan
+			// jatah itu diambil dari maxOutputTokens yang sama. Terukur pada batas
+			// 300: 285 token habis untuk berpikir dan hanya 11 tersisa untuk
+			// jawabannya, sehingga balasan yang sampai ke pelanggan berhenti di
+			// tengah kalimat. Menjawab pertanyaan katalog tidak membutuhkan
+			// penalaran berlapis; yang dibutuhkan adalah jawaban yang utuh.
+			"thinkingConfig": map[string]any{"thinkingBudget": 0},
+		},
 	}
 	body, _ := json.Marshal(reqBody)
 
