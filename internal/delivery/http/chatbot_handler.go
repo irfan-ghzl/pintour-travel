@@ -5,6 +5,8 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/labstack/echo/v4"
 
@@ -46,22 +48,45 @@ func (h *ChatbotHandler) HandleFonnteWebhook(c echo.Context) error {
 		}
 	}
 
-	var phone, message string
+	var phone, message, device string
 	if strings.Contains(c.Request().Header.Get("Content-Type"), "application/json") {
 		var b struct {
 			Phone   string `json:"phone"`
 			Sender  string `json:"sender"`
 			Message string `json:"message"`
+			Device  string `json:"device"`
 		}
 		_ = bindJSON(c, &b)
-		phone, message = firstNonEmpty(b.Phone, b.Sender), b.Message
+		phone, message, device = firstNonEmpty(b.Phone, b.Sender), b.Message, b.Device
 	} else {
 		phone = firstNonEmpty(c.FormValue("sender"), c.FormValue("phone"))
 		message = c.FormValue("message")
+		device = c.FormValue("device")
 	}
 
 	if phone == "" || message == "" {
 		return c.JSON(http.StatusOK, ok(map[string]string{"status": "ignored"}))
+	}
+
+	// Pesan yang dikirim perangkat kita sendiri diabaikan.
+	//
+	// Fonnte meneruskan SELURUH lalu lintas perangkat ke webhook, termasuk pesan
+	// keluar. Tanpa penjagaan ini, balasan bot kembali masuk sebagai pesan baru
+	// dan dibalas lagi — dan seterusnya. Terjadi sungguhan: 35 balasan dalam dua
+	// menit sampai tunnel dimatikan dengan tangan.
+	if device != "" && normalizePhone(device) == normalizePhone(phone) {
+		return c.JSON(http.StatusOK, ok(map[string]string{"status": "self_echo_ignored"}))
+	}
+
+	// Jaring pengaman yang tidak bergantung pada bentuk payload.
+	//
+	// Penjagaan di atas mengandalkan Fonnte mengirim field `device`; bila suatu
+	// saat tidak, atau gemanya datang lewat jalur lain, loop akan berjalan lagi
+	// tanpa ada yang menghentikannya. Batas ini tidak mungkin tersentuh percakapan
+	// manusia, tapi memotong loop dalam hitungan detik.
+	if chatbotFlood.tripped(normalizePhone(phone)) {
+		log.Printf("chatbot: %s melewati batas laju — kemungkinan loop, balasan dihentikan", phone)
+		return c.JSON(http.StatusOK, ok(map[string]string{"status": "rate_limited"}))
 	}
 	if h.svc == nil || !h.svc.Active() {
 		return c.JSON(http.StatusOK, ok(map[string]string{"status": "chatbot_inactive"}))
@@ -152,4 +177,58 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// ─── Penjaga loop chatbot ─────────────────────────────────────────────────────
+
+// chatbotFlood memutus percakapan yang membalas terlalu cepat untuk bisa
+// dilakukan manusia.
+//
+// Delapan pesan per menit dari satu nomor sudah jauh di atas percakapan wajar,
+// sementara loop gema menghasilkan sekitar tiga puluh. Batas ini bukan pengganti
+// penjagaan self-echo di atas melainkan lapisan kedua: yang pertama bergantung
+// pada Fonnte mengirim field `device`, yang ini tidak bergantung pada apa pun.
+var chatbotFlood = &floodGuard{limit: 8, window: time.Minute}
+
+type floodGuard struct {
+	mu     sync.Mutex
+	limit  int
+	window time.Duration
+	seen   map[string]*floodCounter
+}
+
+type floodCounter struct {
+	count  int
+	expiry time.Time
+}
+
+// tripped mencatat satu pesan dari key dan melaporkan apakah batasnya terlampaui.
+func (g *floodGuard) tripped(key string) bool {
+	now := time.Now()
+
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if g.seen == nil {
+		g.seen = map[string]*floodCounter{}
+	}
+
+	// Nomor yang pernah menghubungi tidak boleh menumpuk selamanya di memori.
+	// Disapu saat petanya membesar, bukan lewat goroutine tersendiri — pekerjaan
+	// sekecil ini tidak sebanding dengan biaya menjaga satu goroutine hidup.
+	if len(g.seen) > 1000 {
+		for k, c := range g.seen {
+			if now.After(c.expiry) {
+				delete(g.seen, k)
+			}
+		}
+	}
+
+	c := g.seen[key]
+	if c == nil || now.After(c.expiry) {
+		g.seen[key] = &floodCounter{count: 1, expiry: now.Add(g.window)}
+		return false
+	}
+	c.count++
+	return c.count > g.limit
 }
