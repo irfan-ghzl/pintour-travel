@@ -16,7 +16,12 @@ set -euo pipefail
 
 REPO="${REPO:-https://github.com/irfan-ghzl/pintour-travel.git}"
 APP_DIR="${APP_DIR:-/srv/pintour}"
-DEPLOY_USER="${DEPLOY_USER:-${SUDO_USER:-ubuntu}}"
+
+# Siapa yang nantinya dipakai GitHub Actions untuk SSH. Penyedia berbeda memberi
+# akses awal yang berbeda: AWS lewat user `ubuntu` dengan sudo, DigitalOcean dan
+# Hetzner langsung sebagai root. Menebak `ubuntu` membuat skrip ini gagal di
+# separuh dunia, jadi yang dipakai adalah siapa yang benar-benar memanggilnya.
+DEPLOY_USER="${DEPLOY_USER:-${SUDO_USER:-root}}"
 
 log() { printf '\n\033[1;32m==>\033[0m %s\n' "$1"; }
 
@@ -33,10 +38,21 @@ else
 	curl -fsSL https://get.docker.com | sh
 fi
 
+if ! id "$DEPLOY_USER" >/dev/null 2>&1; then
+	echo "User '$DEPLOY_USER' tidak ada di mesin ini." >&2
+	echo "Jalankan ulang dengan: DEPLOY_USER=<user> sudo -E bash ..." >&2
+	exit 1
+fi
+
 # Supaya user deploy bisa menjalankan docker tanpa sudo. Tanpa ini langkah SSH
 # di workflow gagal dengan permission denied pada docker.sock — kegagalan yang
 # membingungkan karena perintahnya sendiri benar.
-if ! id -nG "$DEPLOY_USER" | grep -qw docker; then
+#
+# root dilewati: ia sudah bisa, dan menambahkannya ke grup docker tidak menambah
+# apa pun selain kebingungan saat ada yang membaca daftar anggota grup itu.
+if [ "$DEPLOY_USER" = root ]; then
+	log "Deploy sebagai root — grup docker tidak diperlukan"
+elif ! id -nG "$DEPLOY_USER" | grep -qw docker; then
 	log "Menambahkan $DEPLOY_USER ke grup docker"
 	usermod -aG docker "$DEPLOY_USER"
 	echo "    (perlu login SSH baru sebelum berlaku)"
