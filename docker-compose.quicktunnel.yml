@@ -1,0 +1,41 @@
+# Quick tunnel — URL publik tanpa akun, tanpa domain, tanpa server.
+#
+# Dijalankan lewat scripts/quick-tunnel.ps1, bukan langsung, karena URL-nya baru
+# diketahui setelah cloudflared menyala dan harus masuk ke .env sebelum API bisa
+# mengirim tautan yang benar.
+#
+# Bedanya dengan docker-compose.tunnel.yml: yang itu memakai named tunnel dengan
+# token, memberi URL tetap, dan mensyaratkan domain di Cloudflare. Yang ini tidak
+# mensyaratkan apa pun, tapi URL-nya acak dan berganti setiap cloudflared
+# restart. Dipakai sebagai jembatan sementara sampai domain tersedia.
+
+services:
+  web:
+    ports: !reset []
+    expose:
+      - "80"
+
+  api:
+    # Sengaja development, dan ini bukan kelalaian.
+    #
+    # Berkas dasar memaksa production supaya Validate() berjalan di server
+    # sungguhan. Di sini itu justru menghalangi: Validate() menolak
+    # MIDTRANS_ENV=sandbox saat server key terisi, padahal untuk demo sandbox
+    # memang yang diinginkan — tidak ada yang mau pembayaran sungguhan terjadi
+    # saat sidang.
+    #
+    # Yang ikut tidak aktif: cookie tidak diberi flag Secure. Fungsinya tetap
+    # jalan di atas HTTPS milik Cloudflare, tapi ini alasan lain kenapa jalur ini
+    # jembatan sementara, bukan tempat aplikasi ini seharusnya tinggal.
+    environment:
+      APP_ENV: development
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: pintour_tunnel
+    restart: unless-stopped
+    # Tanpa token. cloudflared membuat tunnel sekali pakai dan mengumumkan
+    # URL-nya di log — dari sanalah skrip membacanya.
+    command: tunnel --no-autoupdate --url http://web:80
+    depends_on:
+      - web
