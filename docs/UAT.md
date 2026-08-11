@@ -129,9 +129,20 @@ menyembunyikan menu.
 |---|---------|------------------------|
 | 1 | Buat invoice untuk peserta tadi | Invoice terbit dengan nomor, rincian, dan total |
 | 2 | Unduh PDF invoice | Berkas terunduh dan terbaca, memuat identitas peserta dan rincian biaya |
-| 3 | Sebagai peserta di portal, unggah bukti transfer | Bukti terkirim, status menunggu peninjauan |
-| 4 | Sebagai admin, tinjau bukti → **setujui** | Status bukti berubah disetujui |
-| 5 | Konfirmasi pembayaran | Status invoice menjadi lunas; sisa tagihan berkurang sesuai nominal |
+| 3 | Sebagai admin, unggah bukti transfer atas nama peserta | Bukti terkirim, status menunggu peninjauan |
+| 4 | Tinjau bukti → **setujui** | Status bukti berubah disetujui |
+| 5 | Konfirmasi pembayaran | Invoice menjadi lunas **dan portal peserta aktif** |
+
+Langkah 3 sengaja dilakukan admin, bukan peserta. Portal baru terbuka setelah
+pembayaran dikonfirmasi — sebelum itu peserta tidak bisa masuk sama sekali, jadi
+bukti transfer masuk lewat konsultan (WhatsApp) dan diunggahkan oleh admin.
+
+> **Batasan yang diketahui.** Konfirmasi pembayaran bersifat penuh, bukan
+> sebagian. Endpoint-nya tidak menerima nominal — invoice hanya punya kolom
+> `amount`, tanpa sisa tagihan — sehingga konfirmasi apa pun menjadikannya lunas.
+> Nominal yang dikirim di badan permintaan diabaikan diam-diam. Alur DP yang
+> tertulis di syarat paket ("DP minimum Rp 5 juta, pelunasan H-30") karena itu
+> belum tercermin di data. Jangan mendemokan pembayaran bertahap.
 
 ---
 
@@ -193,6 +204,10 @@ dokumen yang dikirim ke pihak ketiga.
 |---|---------|------------------------|
 | 1 | Buka itinerary | Rencana perjalanan per hari tampil sesuai paket |
 | 2 | Unduh PDF briefing | Berkas terunduh, memuat jadwal, titik kumpul, dan hal yang perlu dibawa |
+
+Briefing baru terbuka **H-14 sebelum keberangkatan**; di luar jendela itu
+endpoint-nya menjawab 403 dengan alasannya. Untuk mendemokan langkah 2, pakai
+peserta yang batch-nya berangkat dalam dua minggu ke depan.
 | 3 | Lihat informasi tour leader | Nama dan kontak tour leader batch ini tampil |
 
 ---
@@ -282,7 +297,7 @@ Pembatasan harus berlaku di API meski antarmukanya dilewati.
 | 1 | Di portal, minta **salinan data saya** | Seluruh data pribadi yang tersimpan dikembalikan |
 | 2 | Ajukan penghapusan akun | Permintaan tercatat berstatus menunggu |
 | 3 | Sebagai admin, lihat antrean permintaan | Permintaan tampil beserta identitas pemohon |
-| 4 | Proses permintaan | Data pribadi teranonimkan; invoice tetap ada demi kewajiban pembukuan |
+| 4 | Proses permintaan (`decision`: `setujui` atau `tolak`) | Data pribadi teranonimkan; invoice tetap ada demi kewajiban pembukuan |
 | 5 | Proses permintaan yang sama sekali lagi | Ditolak — satu permintaan hanya bisa diproses sekali |
 
 > **Batasan yang diketahui:** langkah 3–5 belum punya halaman admin. Untuk saat
