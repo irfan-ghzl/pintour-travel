@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -58,7 +60,25 @@ type resendPayload struct {
 }
 
 // Send sends an email via Resend.
+//
+// Kegagalan dicatat di sini, bukan diserahkan ke pemanggil. Kesepuluh pemanggil
+// membuang nilai baliknya dengan `_ =` — masuk akal, karena tidak ada yang mau
+// reset password gagal hanya sebab surelnya tidak terkirim. Tapi akibatnya
+// seluruh kegagalan surel menjadi tak terlihat: endpoint tetap menjawab 200,
+// peserta tidak menerima apa pun, dan tidak ada satu baris pun yang mencatatnya.
+//
+// Ditemukan saat UAT: Resend menolak 403 karena MAIL_FROM masih memakai alamat
+// uji onboarding@resend.dev, yang hanya boleh mengirim ke pemilik akun. Seluruh
+// surel ke peserta gagal, dan tidak ada cara mengetahuinya dari dalam sistem.
 func (s *EmailService) Send(ctx context.Context, to, subject, htmlBody string) error {
+	err := s.send(ctx, to, subject, htmlBody)
+	if err != nil {
+		log.Printf("kirim surel ke %s gagal (%q): %v", to, subject, err)
+	}
+	return err
+}
+
+func (s *EmailService) send(ctx context.Context, to, subject, htmlBody string) error {
 	if s.apiKey == "" {
 		return fmt.Errorf("RESEND_API_KEY not configured")
 	}
@@ -82,7 +102,12 @@ func (s *EmailService) Send(ctx context.Context, to, subject, htmlBody string) e
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("resend API error: status %d", resp.StatusCode)
+		// Badan respons ikut dibawa. Resend menjelaskan sebabnya di sana, dan
+		// "status 403" sendirian tidak memberi tahu apa pun yang bisa
+		// ditindaklanjuti — sementara pesannya menyebut persis domain mana yang
+		// perlu diverifikasi.
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("resend API error: status %d: %s", resp.StatusCode, bytes.TrimSpace(detail))
 	}
 	return nil
 }
