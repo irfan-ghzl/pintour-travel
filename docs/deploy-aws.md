@@ -26,16 +26,36 @@ propagasi DNS.
 
 ### Biaya sebenarnya — baca ini dulu
 
-Tiga hal yang sering mengagetkan:
+Selama free tier berlaku, konfigurasi di runbook ini seharusnya **$0/bulan**:
 
-- **IPv4 publik berbayar sejak Februari 2024**, sekitar $0,005/jam (~$3,6/bulan),
-  **termasuk saat instance-nya free tier**. Jadi "gratis" tetap menghasilkan
-  tagihan kecil. Ini bukan kesalahan konfigurasi Anda.
-- **Model free tier berubah di 2025.** Akun baru cenderung mendapat kredit
-  berjangka (sekitar $100, plus tambahan dari aktivitas onboarding) alih-alih
-  pola lama "12 bulan t2.micro gratis". Akun lama umumnya masih di pola lama.
-  Periksa halaman billing akun Anda sendiri — ini berubah cukup sering.
-- **Setelah free tier habis**: t3.micro ~$7,5 + IPv4 ~$3,6 ≈ **$11/bulan**.
+| Komponen                     | Free tier 12 bulan | Setelah habis |
+| ---------------------------- | ------------------ | ------------- |
+| EC2 `t3.micro` 750 jam       | $0                 | ~$7,5         |
+| IPv4 publik 750 jam          | $0                 | ~$3,6         |
+| EBS 20 GB gp3 (batas 30 GB)  | $0                 | ~$1,6         |
+| Transfer keluar 100 GB       | $0                 | $0            |
+| **Total**                    | **$0**             | **~$12–13**   |
+
+IPv4 publik memang mulai ditagih Februari 2024, tapi pada saat yang sama AWS
+memasukkan 750 jam/bulan ke dalam free tier — cukup untuk satu alamat di satu
+instance yang menyala terus (±730 jam sebulan).
+
+Yang tetap menagih meski free tier masih berlaku:
+
+- **Elastic IP saat instance dimatikan.** AWS menagih EIP yang tidak menempel
+  pada instance yang *sedang berjalan*. Mematikan instance untuk berhemat justru
+  menyalakan tagihan IP-nya.
+- **EIP yang lupa dilepas** setelah instance dihapus.
+- **Instance kedua**, atau tipe yang lebih besar. Jatah 750 jam itu total, bukan
+  per instance.
+- **Snapshot EBS** yang menumpuk.
+
+**Model free tier berubah di 2025.** Akun baru cenderung mendapat kredit
+berjangka alih-alih pola "12 bulan gratis". Kalau saat mendaftar ditawari jenis
+akun gratis yang **menghentikan layanan** begitu kredit habis alih-alih menagih
+kartu, ambil itu — untuk keperluan sidang, layanan berhenti jauh lebih baik
+daripada tagihan yang tidak diduga. Pola mana yang berlaku untuk akun Anda
+terlihat di **Billing → Free tier** setelah akun aktif.
 
 Kalau yang Anda inginkan adalah tagihan yang pasti dan tidak bisa meledak,
 **Lightsail** lebih tenang: $5–12/bulan tetap, sudah termasuk IP publik dan kuota
@@ -416,9 +436,13 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T db pg_du
 ```
 
 **Menghemat biaya di sela-sela pemakaian.** Instance yang di-stop tidak ditagih
-jam komputasinya; EBS dan Elastic IP tetap ditagih. Data aman karena tersimpan di
-volume Docker di atas EBS. Nyalakan lagi lewat konsol, dan stack naik sendiri
-karena `restart: unless-stopped`.
+jam komputasinya, dan datanya aman karena tersimpan di volume Docker di atas EBS.
+Nyalakan lagi lewat konsol; stack naik sendiri karena `restart: unless-stopped`.
+
+Tapi perhitungannya sering terbalik selama free tier masih berlaku: jam EC2-nya
+memang gratis, sementara Elastic IP yang menganggur justru **mulai** ditagih
+karena tidak lagi menempel pada instance yang berjalan. Mematikan instance baru
+menghemat setelah free tier habis. Sebelum itu, biarkan menyala.
 
 ---
 
