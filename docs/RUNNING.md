@@ -197,6 +197,13 @@ coverage lama dan angkanya melenceng.
 Test kontrak repository **dilewati** tanpa database. Untuk ikut menjalankannya,
 nyalakan Postgres (mode 1 atau 2) lalu:
 
+```powershell
+$env:TEST_DATABASE_URL = "postgres://pintour:<password>@localhost:5432/pintour_db?sslmode=disable"; go test ./internal/... -count=1
+```
+
+Awalan variabel di depan perintah (`VAR=x go test`) adalah sintaks bash dan
+tidak dikenali PowerShell. Di bash:
+
 ```bash
 TEST_DATABASE_URL="postgres://pintour:<password>@localhost:5432/pintour_db?sslmode=disable" go test ./internal/... -count=1
 ```
