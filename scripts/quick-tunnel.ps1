@@ -105,3 +105,22 @@ if ($ok) {
 Write-Host ""
 Write-Host "  URL ini berubah setiap cloudflared restart. Jalankan skrip ini lagi"
 Write-Host "  untuk mendapatkan yang baru sekaligus menyelaraskan .env."
+
+# Webhook Fonnte tidak ikut tersinkron oleh skrip ini — ia hidup di dashboard
+# Fonnte, di luar jangkauan. Dicetak di sini karena inilah satu-satunya langkah
+# manual yang tersisa, dan kalau terlewat gejalanya menyesatkan: chatbot terlihat
+# mati padahal aplikasinya sehat, hanya saja tidak ada yang pernah memanggilnya.
+$token = (Get-Content $envPath | Where-Object { $_ -match '^\s*FONNTE_WEBHOOK_TOKEN=' } |
+	Select-Object -First 1) -replace '^\s*FONNTE_WEBHOOK_TOKEN=', '' -replace '#.*$', ''
+$token = $token.Trim()
+
+if ($token) {
+	Write-Host ""
+	Write-Host "  Tempel ini ke dashboard Fonnte (Device -> Webhook):" -ForegroundColor Yellow
+	Write-Host "  $url/api/v1/webhooks/fonnte?token=$token" -ForegroundColor Cyan
+	Write-Host "  Tanpa token, webhook dijawab 401 dan chatbot tidak akan membalas."
+} else {
+	Write-Host ""
+	Write-Host "  FONNTE_WEBHOOK_TOKEN kosong — chatbot tidak bisa memverifikasi" -ForegroundColor Yellow
+	Write-Host "  pesan masuk. Isi dulu di .env sebelum menguji chatbot."
+}

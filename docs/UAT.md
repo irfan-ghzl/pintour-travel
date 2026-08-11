@@ -215,6 +215,19 @@ dokumen yang dikirim ke pihak ketiga.
 
 **Aktor:** calon pelanggan **Prasyarat:** URL publik aktif + webhook Fonnte diarahkan ke sana
 
+> Langkah yang paling sering terlewat, dan gejalanya menyesatkan. Webhook hidup
+> di dashboard Fonnte — di luar jangkauan skrip mana pun di repo ini — jadi ia
+> **tidak ikut berubah** saat URL tunnel berganti. Kalau bot tidak membalas,
+> periksa dulu apakah Fonnte pernah menghubungi aplikasi sama sekali:
+>
+> ```bash
+> docker compose -f docker-compose.yml -f docker-compose.quicktunnel.yml logs web | grep webhooks/fonnte
+> ```
+>
+> Kosong berarti pesan tidak pernah sampai, dan masalahnya di konfigurasi Fonnte
+> — bukan di chatbot. URL yang harus dipasang dicetak oleh `quick-tunnel.ps1`,
+> lengkap dengan `?token=`; tanpa token webhook dijawab 401.
+
 | # | Langkah | Hasil yang diharapkan |
 |---|---------|------------------------|
 | 1 | Kirim pesan ke nomor WhatsApp bisnis | Bot membalas relevan dengan pertanyaannya |
