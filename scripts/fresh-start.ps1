@@ -24,20 +24,26 @@ function Ok($msg) { Write-Host "  ✅ $msg" -ForegroundColor Green }
 function Err($msg) { Write-Host "  ❌ $msg" -ForegroundColor Red }
 function Info($msg) { Write-Host "  ℹ  $msg" -ForegroundColor Gray }
 
+# Semua perintah di skrip ini memakai overlay dev. Berkas dasar memaksa
+# APP_ENV=production supaya Validate() benar-benar berjalan di server;
+# menjalankannya apa adanya di laptop membuat API menolak start karena
+# PORTAL_BASE_URL memang localhost dan Midtrans memang sandbox.
+$C = @('-f', 'docker-compose.yml', '-f', 'docker-compose.dev.yml')
+
 # ─── 1. Stop & wipe ─────────────────────────────────────────────────────────
 Step 1 "Stop & wipe semua container + volume"
-docker compose down -v 2>&1 | Out-Host
+docker compose @C down -v 2>&1 | Out-Host
 Ok "Containers & volumes removed"
 
 # ─── 2. Rebuild ─────────────────────────────────────────────────────────────
 Step 2 "Rebuild images (api + web) dari source terbaru"
-docker compose build --no-cache 2>&1 | Out-Host
+docker compose @C build --no-cache 2>&1 | Out-Host
 if ($LASTEXITCODE -ne 0) { Err "Build failed"; exit 1 }
 Ok "Images rebuilt"
 
 # ─── 3. Start db & redis dulu, tunggu healthy ───────────────────────────────
 Step 3 "Start db + redis"
-docker compose up -d db redis 2>&1 | Out-Host
+docker compose @C up -d db redis 2>&1 | Out-Host
 
 Info "Menunggu DB benar2 healthy (apply migration 001-005)..."
 $maxWait = 90  # second
@@ -51,7 +57,7 @@ while ($elapsed -lt $maxWait) {
 }
 if ($elapsed -ge $maxWait) {
   Err "DB tidak healthy setelah $maxWait detik"
-  docker compose logs db --tail 30 | Out-Host
+  docker compose @C logs db --tail 30 | Out-Host
   exit 1
 }
 
@@ -65,7 +71,7 @@ Ok "Migration 004 & 005 applied"
 
 # ─── 5. Start api + web ──────────────────────────────────────────────────────
 Step 5 "Start api + web"
-docker compose up -d api web 2>&1 | Out-Host
+docker compose @C up -d api web 2>&1 | Out-Host
 Start-Sleep -Seconds 5
 Ok "Containers started"
 
@@ -76,7 +82,7 @@ if ($LASTEXITCODE -ne 0) { Err "Seed gagal"; exit 1 }
 
 # ─── 7. Verifikasi ───────────────────────────────────────────────────────────
 Step 7 "Verifikasi semua service"
-docker compose ps | Out-Host
+docker compose @C ps | Out-Host
 
 Write-Host ""
 Info "Test health endpoint..."

@@ -28,6 +28,12 @@ function Ok($msg) { Write-Host "✓ $msg" -ForegroundColor Green }
 function Warn($msg) { Write-Host "⚠ $msg" -ForegroundColor Yellow }
 function Err($msg) { Write-Host "✗ $msg" -ForegroundColor Red }
 
+# Semua perintah di skrip ini memakai overlay dev. Berkas dasar memaksa
+# APP_ENV=production supaya Validate() benar-benar berjalan di server;
+# menjalankannya apa adanya di laptop membuat API menolak start karena
+# PORTAL_BASE_URL memang localhost dan Midtrans memang sandbox.
+$C = @('-f', 'docker-compose.yml', '-f', 'docker-compose.dev.yml')
+
 # 0. Pre-check
 if (-not (Test-Path ".env")) {
   Err ".env tidak ditemukan. Copy dari .env.example dulu:"
@@ -36,7 +42,7 @@ if (-not (Test-Path ".env")) {
 }
 
 Section "1. Stopping running containers"
-docker compose down 2>&1 | Out-Null
+docker compose @C down 2>&1 | Out-Null
 Ok "Containers stopped"
 
 if ($Fresh) {
@@ -57,9 +63,9 @@ if (-not $SkipBuild) {
   $buildArgs = @()
   if ($NoCache) { $buildArgs += "--no-cache" }
   if ($ApiOnly) {
-    docker compose build @buildArgs api
+    docker compose @C build @buildArgs api
   } else {
-    docker compose build @buildArgs
+    docker compose @C build @buildArgs
   }
   if ($LASTEXITCODE -ne 0) {
     Err "Build gagal — cek error di atas"
@@ -71,7 +77,7 @@ if (-not $SkipBuild) {
 }
 
 Section "4. Starting services"
-docker compose up -d
+docker compose @C up -d
 if ($LASTEXITCODE -ne 0) {
   Err "Start gagal"
   exit 1
@@ -104,7 +110,7 @@ while ($elapsed -lt $timeout) {
 
 if (-not $apiReady) {
   Warn "API belum responding setelah ${timeout}s — cek log:"
-  Write-Host "    docker compose logs -f api" -ForegroundColor Gray
+  Write-Host "    docker compose -f docker-compose.yml -f docker-compose.dev.yml logs -f api" -ForegroundColor Gray
 }
 
 if ($Fresh -and $dbHealthy) {
@@ -126,6 +132,6 @@ Write-Host "  API       : " -NoNewline; Write-Host "http://localhost:8080/api/v1
 Write-Host "  Swagger   : " -NoNewline; Write-Host "http://localhost:8080/swagger/index.html" -ForegroundColor Yellow
 Write-Host "  Postgres  : " -NoNewline; Write-Host "postgres://pintour:pintour_pass@localhost:5432/pintour_db" -ForegroundColor Yellow
 Write-Host ""
-Write-Host "  Tail logs : " -NoNewline; Write-Host "docker compose logs -f" -ForegroundColor Gray
-Write-Host "  Stop all  : " -NoNewline; Write-Host "docker compose down" -ForegroundColor Gray
+Write-Host "  Tail logs : " -NoNewline; Write-Host "docker compose -f docker-compose.yml -f docker-compose.dev.yml logs -f" -ForegroundColor Gray
+Write-Host "  Stop all  : " -NoNewline; Write-Host "docker compose -f docker-compose.yml -f docker-compose.dev.yml down" -ForegroundColor Gray
 Write-Host ""

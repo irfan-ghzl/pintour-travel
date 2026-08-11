@@ -6,6 +6,18 @@
         docker-up docker-down docker-build docker-logs \
         sqlc swag proto tidy seed-admin migrate migrate-down
 
+# Seluruh target di bawah adalah perintah untuk laptop, jadi semuanya memakai
+# overlay dev. Berkas dasar sendiri memaksa APP_ENV=production supaya Validate()
+# benar-benar berjalan di server; menjalankannya apa adanya di sini membuat API
+# menolak start karena PORTAL_BASE_URL memang localhost dan Midtrans memang
+# sandbox — dan keduanya benar untuk laptop.
+#
+# Overlay-nya tidak dinamai docker-compose.override.yml, yang akan termuat
+# sendiri tanpa perlu ditulis di sini, karena berkas dengan nama itu juga akan
+# ikut membuka port basis data di server bagi siapa pun yang mengetik
+# `docker compose up` di sana tanpa flag.
+COMPOSE := docker compose -f docker-compose.yml -f docker-compose.dev.yml
+
 # Default target
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -81,19 +93,19 @@ proto: ## Compile Protobuf schemas (requires protoc + protoc-gen-go)
 # ── Docker ────────────────────────────────────────────────────────────────────
 
 docker-build: ## Build all Docker images
-	docker compose build
+	$(COMPOSE) build
 
 docker-up: ## Start all services in the background
-	docker compose up -d
+	$(COMPOSE) up -d
 
 docker-down: ## Stop and remove all containers
-	docker compose down
+	$(COMPOSE) down
 
 docker-logs: ## Tail logs for all services
-	docker compose logs -f
+	$(COMPOSE) logs -f
 
 docker-clean: ## Stop containers and remove volumes
-	docker compose down -v
+	$(COMPOSE) down -v
 
 rebuild: ## Rebuild containers (keep DB data)
 	@pwsh -File scripts/rebuild.ps1 || bash scripts/rebuild.sh
