@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Search, RefreshCw, ChevronRight, UserPlus, MessageSquare, Activity } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../../utils/api'
-import type { Lead, LeadStatus, LeadNote, LeadStatusChange, PaginatedResponse, WANotification, Participant } from '../../types'
+import type { Lead, LeadStatus, LeadNote, LeadStatusChange, PaginatedResponse, WANotification, Participant, PackageBatch, ConvertLeadRequest } from '../../types'
 
 const STATUS_COLORS: Record<LeadStatus, string> = {
   baru: 'bg-blue-100 text-blue-700',
@@ -45,6 +45,12 @@ export default function AdminLeadsPage() {
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null)
   const [noteText, setNoteText] = useState('')
   const [activeTab, setActiveTab] = useState<'detail' | 'log' | 'wa'>('detail')
+  // Konversi dibuka dari lead yang bersangkutan, bukan dari halaman Peserta.
+  // Menyimpan lead-nya utuh (bukan sekadar id) supaya dialog bisa menyebut
+  // namanya dan menyaring batch ke paket yang memang diminati lead itu.
+  const [convertLead, setConvertLead] = useState<Lead | null>(null)
+  const [convertRoom, setConvertRoom] = useState<ConvertLeadRequest['room_type']>('double')
+  const [convertBatch, setConvertBatch] = useState('')
   const qc = useQueryClient()
 
   const params = new URLSearchParams({ page: String(page), per_page: '20' })
@@ -83,6 +89,34 @@ export default function AdminLeadsPage() {
       toast.success('Status diperbarui')
     },
     onError: () => toast.error('Gagal memperbarui status'),
+  })
+
+  // Batch yang ditawarkan hanya milik paket yang diminati lead. Dropdown ini
+  // sekaligus menutup satu kelas kesalahan yang dulu tidak dicegah apa pun:
+  // menempelkan UUID batch dari paket yang sama sekali berbeda.
+  const { data: batches } = useQuery({
+    queryKey: ['batches-for-convert', convertLead?.package_id],
+    queryFn: () =>
+      api.get<{ success: boolean; data: PackageBatch[] }>(`/admin/packages/${convertLead!.package_id}/batches`)
+        .then(r => r.data.data ?? []),
+    enabled: !!convertLead?.package_id,
+  })
+
+  const convertMut = useMutation({
+    mutationFn: (req: ConvertLeadRequest) =>
+      api.post('/admin/participants/convert', req).then(r => r.data),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ['leads'] })
+      qc.invalidateQueries({ queryKey: ['lead-detail'] })
+      if (res.data?.reused_account) {
+        toast.success('Peserta lama terdeteksi — akun portal lama dipakai, password tidak berubah.', { duration: 6000 })
+      } else {
+        toast.success(`Peserta dibuat. Password sementara: ${res.data?.temp_password}`, { duration: 6000 })
+      }
+      setConvertLead(null)
+      setConvertBatch('')
+    },
+    onError: (e: any) => toast.error(e.response?.data?.message ?? 'Konversi gagal'),
   })
 
   const noteMut = useMutation({
@@ -251,9 +285,13 @@ export default function AdminLeadsPage() {
                       </button>
                     )}
                     {lead.status === 'deal' && (
-                      <span className="px-2 py-1 text-xs bg-blue-50 text-blue-700 rounded font-medium">
-                        Siap Konversi
-                      </span>
+                      <button
+                        onClick={() => { setConvertLead(lead); setConvertBatch(''); setConvertRoom('double') }}
+                        className="flex items-center gap-1 px-2 py-1 text-xs bg-blue-600 text-white rounded font-medium hover:bg-blue-700"
+                      >
+                        <UserPlus size={11} />
+                        Konversi
+                      </button>
                     )}
                     <button
                       onClick={() => { setSelectedLead(lead); setActiveTab('detail') }}
@@ -461,6 +499,80 @@ export default function AdminLeadsPage() {
                 )}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {convertLead && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl w-full max-w-sm p-6 space-y-4">
+            <div className="flex justify-between items-start">
+              <div>
+                <h3 className="font-semibold text-gray-800">Konversi ke Peserta</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {convertLead.name} &middot; {convertLead.phone} &middot; {convertLead.pax} pax
+                </p>
+              </div>
+              <button onClick={() => setConvertLead(null)} className="text-gray-400">&#10005;</button>
+            </div>
+
+            <p className="text-xs text-gray-600 bg-gray-50 rounded-lg px-3 py-2">
+              Paket: <span className="font-medium">{convertLead.package_name}</span>
+            </p>
+
+            {convertLead.is_returning && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5 text-xs text-amber-800">
+                <p className="font-semibold mb-0.5">Pelanggan Lama Terdeteksi</p>
+                <p>
+                  Nomor <span className="font-medium">{convertLead.phone}</span> sudah memiliki akun portal.
+                  Akun lama akan dipakai &mdash; password <span className="font-medium">tidak berubah</span>.
+                </p>
+              </div>
+            )}
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-medium text-gray-600 block mb-1">Batch Keberangkatan</label>
+                <select
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  value={convertBatch}
+                  onChange={(e) => setConvertBatch(e.target.value)}
+                >
+                  <option value="">Pilih tanggal keberangkatan...</option>
+                  {(batches ?? []).map((b) => (
+                    <option key={b.id} value={b.id} disabled={b.status !== 'tersedia'}>
+                      {new Date(b.departure_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      {b.status === 'tersedia' ? ` — kuota ${b.quota}` : ` — ${b.status}`}
+                    </option>
+                  ))}
+                </select>
+                {batches && batches.length === 0 && (
+                  <p className="text-xs text-red-600 mt-1">
+                    Paket ini belum punya batch keberangkatan. Tambahkan dulu di menu Paket.
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600 block mb-1">Tipe Kamar</label>
+                <select
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  value={convertRoom}
+                  onChange={(e) => setConvertRoom(e.target.value as ConvertLeadRequest['room_type'])}
+                >
+                  <option value="single">Single</option>
+                  <option value="double">Double</option>
+                  <option value="triple">Triple</option>
+                </select>
+              </div>
+            </div>
+
+            <button
+              onClick={() => convertMut.mutate({ lead_id: convertLead.id, batch_id: convertBatch, room_type: convertRoom })}
+              disabled={!convertBatch || convertMut.isPending}
+              className="w-full py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium disabled:opacity-50"
+            >
+              {convertMut.isPending ? 'Memproses...' : 'Konversi Sekarang'}
+            </button>
           </div>
         </div>
       )}
