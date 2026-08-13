@@ -75,6 +75,7 @@ func (m *mockUserRepo) GetByID(_ context.Context, id string) (*domainUser.User, 
 }
 func (m *mockUserRepo) Create(_ context.Context, _ *domainUser.User) error { return nil }
 func (m *mockUserRepo) Update(_ context.Context, _ *domainUser.User) error { return nil }
+func (m *mockUserRepo) UpdatePassword(_ context.Context, _, _ string) error { return nil }
 func (m *mockUserRepo) Deactivate(_ context.Context, _ string) error       { return nil }
 func (m *mockUserRepo) ListByRole(_ context.Context, _ string) ([]domainUser.User, error) {
 	return m.consultants, nil

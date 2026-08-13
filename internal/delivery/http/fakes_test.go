@@ -186,6 +186,23 @@ func (r *fakeUserRepo) Create(_ context.Context, u *domainUser.User) error {
 	return nil
 }
 
+// UpdatePassword menulis kata sandi saja, sama seperti repository sungguhan.
+// Ditiru persis supaya test bisa membuktikan kata sandi baru benar-benar
+// menggantikan yang lama — cacatnya dulu justru berupa Update yang melaporkan
+// berhasil sementara kolomnya tidak tersentuh.
+func (r *fakeUserRepo) UpdatePassword(_ context.Context, id, hashedPassword string) error {
+	if r.err != nil {
+		return r.err
+	}
+	u, ok := r.users[id]
+	if !ok {
+		return errNotFound
+	}
+	u.Password = hashedPassword
+	u.UpdatedAt = time.Now()
+	return nil
+}
+
 func (r *fakeUserRepo) Update(_ context.Context, u *domainUser.User) error {
 	if r.err != nil {
 		return r.err
