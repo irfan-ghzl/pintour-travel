@@ -103,11 +103,20 @@ func (s *Service) Create(ctx context.Context, inv *domainInvoice.Invoice) error 
 		if err != nil {
 			return
 		}
-		amount := fmt.Sprintf("Rp %s", format.Rupiah(inv.Amount))
+		// Angka saja — templat WhatsApp yang menuliskan "Rp", sama seperti yang
+		// sudah dilakukan jalur pembayaran diterima. Menambahkannya di sini juga
+		// membuat pesan yang sampai ke peserta berbunyi "Rp Rp 189.000.000".
+		amount := format.Rupiah(inv.Amount)
 		dueDate := inv.DueDate.Format("02 Jan 2006")
+		// Menunjuk peserta ke portal di sini adalah janji yang belum bisa
+		// ditepati: portal baru terbuka setelah pembayaran dikonfirmasi, sehingga
+		// invoice ini justru tiba pada satu-satunya masa ketika portalnya
+		// tertutup. Peserta yang menurut akan ditolak login dan menyimpulkan
+		// passwordnya salah. Nomor, nominal, dan jatuh tempo sudah ada di pesan
+		// ini; yang belum ada cukup dikatakan apa adanya.
 		pdfLink := inv.PDFPath
 		if pdfLink == "" {
-			pdfLink = "(PDF tersedia di portal peserta)"
+			pdfLink = "(tersedia di portal setelah pembayaran dikonfirmasi)"
 		}
 		_ = s.fonnte.SendInvoice(bgCtx, pt.Phone, pt.Name,
 			inv.InvoiceNumber, amount, dueDate, pdfLink, inv.ID)
