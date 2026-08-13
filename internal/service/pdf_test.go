@@ -178,3 +178,31 @@ func TestGenerateBriefing_FitsOnOnePage(t *testing.T) {
 		t.Fatalf("briefing = %d halaman, ingin 1", n)
 	}
 }
+
+// A4 selebar 210 mm dengan margin 20 mm di kiri dan kanan menyisakan 170 mm.
+// Setiap kelompok kolom harus berjumlah persis itu.
+//
+// Ketiga tabel dulu melebihinya — invoice 190 mm pada tiga barisnya, laporan
+// bandara 180 mm — dan tidak ada yang mengeluh: gofpdf menggambar terus melewati
+// margin. Yang terlihat oleh peserta hanyalah tabel yang menempel di tepi
+// kertas sementara garis pemisah di atasnya berhenti di tempat yang benar.
+func TestPDFColumnsFitTheContentWidth(t *testing.T) {
+	cases := map[string][]float64{
+		"baris tanggal invoice": {contentWidth / 2, contentWidth / 2},
+		"tabel invoice":         {invNo, invDesc, invValue},
+		"bilah total invoice":   {contentWidth - invValue, invValue},
+		"tabel laporan bandara": {airNo, airName, airStep, airStep, airLast},
+	}
+	for nama, kolom := range cases {
+		var total float64
+		for _, w := range kolom {
+			if w <= 0 {
+				t.Fatalf("%s: ada kolom selebar %v", nama, w)
+			}
+			total += w
+		}
+		if total != contentWidth {
+			t.Errorf("%s: jumlah lebar = %v mm, ingin %v mm", nama, total, contentWidth)
+		}
+	}
+}
