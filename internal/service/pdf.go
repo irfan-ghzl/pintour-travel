@@ -44,6 +44,24 @@ func newDoc(orientation string, marginLeft, marginTop, marginRight float64) *doc
 
 func (d *doc) Cell(w, h float64, txt string) { d.Fpdf.Cell(w, h, d.tr(txt)) }
 
+// footerBand draws the closing green band across the bottom of the page.
+//
+// Auto page break is switched off first, and that is the whole point. gofpdf
+// breaks when a cell would end past 2 cm from the bottom, while this band sits
+// at y=277 with its text at y=281 — deliberately inside that zone, because it is
+// the bottom of the page. Left on, the band was painted on page one but its text
+// pushed onto a fresh page two: white letters on white paper, so the invoice
+// arrived with a blank second sheet that nobody could see anything on.
+func (d *doc) footerBand(text string) {
+	d.SetAutoPageBreak(false, 0)
+	d.SetFillColor(16, 100, 59)
+	d.Rect(0, 277, 210, 20, "F")
+	d.SetTextColor(255, 255, 255)
+	d.SetFont("Helvetica", "", 8)
+	d.SetXY(20, 281)
+	d.Cell(0, 5, text)
+}
+
 func (d *doc) CellFormat(w, h float64, txt, border string, ln int, align string, fill bool, link int, linkStr string) {
 	d.Fpdf.CellFormat(w, h, d.tr(txt), border, ln, align, fill, link, linkStr)
 }
@@ -185,13 +203,8 @@ func (s *PDFService) GenerateInvoice(d InvoiceData) ([]byte, error) {
 	pdf.Cell(0, 5, "melalui Portal Peserta. Admin akan mengkonfirmasi dalam 1x24 jam.")
 	pdf.Ln(35)
 
-	// Footer
-	pdf.SetFillColor(16, 100, 59)
-	pdf.Rect(0, 277, 210, 20, "F")
-	pdf.SetTextColor(255, 255, 255)
-	pdf.SetFont("Helvetica", "", 8)
-	pdf.SetXY(20, 281)
-	pdf.Cell(0, 5, fmt.Sprintf("Diterbitkan oleh: %s  |  %s  |  pintour.app", d.IssuedByName, d.IssuedAt.Format("02 Jan 2006 15:04")))
+	pdf.footerBand(fmt.Sprintf("Diterbitkan oleh: %s  |  %s  |  pintour.app",
+		d.IssuedByName, d.IssuedAt.Format("02 Jan 2006 15:04")))
 
 	var buf bytes.Buffer
 	if err := pdf.Output(&buf); err != nil {
@@ -253,13 +266,7 @@ func (s *PDFService) GenerateBriefing(d BriefingData) ([]byte, error) {
 		pdf.Ln(4)
 	}
 
-	// Footer
-	pdf.SetFillColor(16, 100, 59)
-	pdf.Rect(0, 277, 210, 20, "F")
-	pdf.SetTextColor(255, 255, 255)
-	pdf.SetFont("Helvetica", "", 8)
-	pdf.SetXY(20, 281)
-	pdf.Cell(0, 5, "Dokumen ini bersifat rahasia dan hanya untuk peserta terdaftar. © Pintour Travel")
+	pdf.footerBand("Dokumen ini bersifat rahasia dan hanya untuk peserta terdaftar. © Pintour Travel")
 
 	var buf bytes.Buffer
 	if err := pdf.Output(&buf); err != nil {

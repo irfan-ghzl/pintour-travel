@@ -131,3 +131,50 @@ func TestGenerateAirportReport(t *testing.T) {
 		t.Errorf("airport report PDF too small: %d bytes", len(out))
 	}
 }
+
+// Invoice dan briefing memakai satu halaman penuh dengan pita hijau di kaki
+// halaman. Pita itu duduk di y=277 dan teksnya di y=281 — di dalam zona yang
+// dianggap gofpdf sebagai batas bawah, sehingga pemutus halaman otomatis
+// melemparkan teksnya ke halaman berikutnya. Akibatnya invoice tiba dengan
+// lembar kedua yang tampak kosong: huruf putih di atas kertas putih.
+//
+// Jumlah halaman dibaca dari berkasnya sendiri, bukan dari keadaan internal
+// gofpdf, karena yang diterima peserta adalah berkas itu.
+func countPDFPages(t *testing.T, b []byte) int {
+	t.Helper()
+	if !bytes.HasPrefix(b, []byte("%PDF-")) {
+		t.Fatalf("bukan berkas PDF: %q", string(b[:min(8, len(b))]))
+	}
+	return bytes.Count(b, []byte("/Type /Page")) - bytes.Count(b, []byte("/Type /Pages"))
+}
+
+func TestGenerateInvoice_FitsOnOnePage(t *testing.T) {
+	out, err := (&PDFService{}).GenerateInvoice(InvoiceData{
+		InvoiceNumber: "INV-202608-0010", IssuedAt: time.Now(),
+		DueDate:         calendar.Today().AddDays(7),
+		ParticipantName: "agiel", ParticipantPhone: "62895334442331",
+		PackageName: "Korea Selatan Honeymoon 7 Hari", BatchDate: "09 September 2026",
+		RoomType: "Double", Amount: 189000000,
+		Notes: "Invoice otomatis dibuat saat konversi leads.", IssuedByName: "Admin Pintour",
+	})
+	if err != nil {
+		t.Fatalf("GenerateInvoice: %v", err)
+	}
+	if n := countPDFPages(t, out); n != 1 {
+		t.Fatalf("invoice = %d halaman, ingin 1", n)
+	}
+}
+
+func TestGenerateBriefing_FitsOnOnePage(t *testing.T) {
+	out, err := (&PDFService{}).GenerateBriefing(BriefingData{
+		ParticipantName: "agiel", PackageName: "Korea Selatan Honeymoon 7 Hari",
+		DepartureDate: "09 September 2026", TourLeaderName: "Siti",
+		TourLeaderPhone: "628111000001", TourLeaderBio: "Tour leader berpengalaman.",
+	})
+	if err != nil {
+		t.Fatalf("GenerateBriefing: %v", err)
+	}
+	if n := countPDFPages(t, out); n != 1 {
+		t.Fatalf("briefing = %d halaman, ingin 1", n)
+	}
+}
