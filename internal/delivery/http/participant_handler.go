@@ -61,6 +61,26 @@ func (h *ParticipantHandler) ListParticipants(c echo.Context) error {
 // @Success      200 {object} map[string]interface{}
 // @Router       /admin/participants/{id} [get]
 func (h *ParticipantHandler) GetParticipant(c echo.Context) error {
+	// Konsultan hanya boleh membuka peserta hasil konversi lead miliknya.
+	//
+	// Daftar peserta sudah disaring lewat lead yang menurunkannya, dan
+	// penyaringan itu membuat pembatasannya tampak selesai — detail ini dulu
+	// tidak memeriksa apa pun. Cacat yang sama pernah ditemukan pada detail lead;
+	// keduanya lolos karena daftarnya benar, sehingga tidak ada yang mencurigakan
+	// sampai endpoint detailnya dipanggil langsung.
+	//
+	// Pemeriksaannya lewat penyaring daftar yang sama, bukan kueri kepemilikan
+	// tersendiri, supaya hanya ada satu definisi "peserta milik siapa".
+	if claimRole(c) == "konsultan" {
+		id, uid := c.Param("id"), claimUserID(c)
+		mine, _, err := h.svc.ListParticipants(c.Request().Context(), domainParticipant.Filter{
+			ID: &id, AssignedTo: &uid, Page: 1, PerPage: 1,
+		})
+		if err != nil || len(mine) == 0 {
+			return notFound(c, "peserta tidak ditemukan")
+		}
+	}
+
 	p, err := h.svc.GetParticipant(c.Request().Context(), c.Param("id"))
 	if err != nil {
 		return notFound(c, "peserta tidak ditemukan")

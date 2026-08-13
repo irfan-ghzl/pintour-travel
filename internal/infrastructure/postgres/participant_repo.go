@@ -115,6 +115,11 @@ func (r *participantRepo) List(ctx context.Context, f participant.Filter) ([]par
 	args := []interface{}{}
 	i := 1
 
+	if f.ID != nil {
+		where += fmt.Sprintf(" AND p.id=$%d", i)
+		args = append(args, *f.ID)
+		i++
+	}
 	if f.BatchID != nil {
 		where += fmt.Sprintf(" AND p.batch_id=$%d", i)
 		args = append(args, *f.BatchID)

@@ -103,6 +103,10 @@ type Filter struct {
 	// AssignedTo scopes the list to participants whose originating lead is
 	// assigned to this consultant (used to limit konsultan to their own).
 	AssignedTo *string
+	// ID narrows the list to a single participant. It exists so that reading one
+	// participant can go through the same ownership join the list already uses,
+	// instead of a second definition of "owned by" that could drift from it.
+	ID *string
 	Page       int
 	PerPage    int
 }

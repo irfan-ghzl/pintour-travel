@@ -549,6 +549,11 @@ type fakeParticipantRepo struct {
 	fakeErr
 	participants map[string]*domainParticipant.Participant
 	order        []string
+	// leads resolves participant -> originating lead -> assigned consultant, the
+	// same chain the Postgres repository walks with a JOIN. Without it the fake
+	// silently ignores Filter.AssignedTo, and every test asserting that a
+	// konsultan sees only their own participants passes without testing anything.
+	leads *fakeLeadRepo
 }
 
 func newFakeParticipantRepo() *fakeParticipantRepo {
@@ -645,9 +650,25 @@ func (r *fakeParticipantRepo) List(_ context.Context, f domainParticipant.Filter
 		if f.IsActive != nil && p.IsActive != *f.IsActive {
 			continue
 		}
+		if f.ID != nil && p.ID != *f.ID {
+			continue
+		}
+		if f.AssignedTo != nil && !r.ownedBy(p, *f.AssignedTo) {
+			continue
+		}
 		out = append(out, *p)
 	}
 	return out, len(out), nil
+}
+
+// ownedBy mirrors the JOIN in the Postgres repository: a participant belongs to
+// the consultant its originating lead is assigned to.
+func (r *fakeParticipantRepo) ownedBy(p *domainParticipant.Participant, consultantID string) bool {
+	if r.leads == nil || p.LeadID == nil {
+		return false
+	}
+	l, ok := r.leads.leads[*p.LeadID]
+	return ok && l.AssignedTo != nil && *l.AssignedTo == consultantID
 }
 
 func (r *fakeParticipantRepo) Activate(_ context.Context, id string) error {

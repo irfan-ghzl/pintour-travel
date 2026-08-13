@@ -6,6 +6,7 @@ import (
 	"time"
 
 	domainLead "github.com/irfan-ghzl/pintour-travel/internal/domain/lead"
+	domainParticipant "github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
 )
 
 // Daftar leads sudah disaring per konsultan sejak awal, dan penyaringan itulah
@@ -55,6 +56,52 @@ func TestLeadDetail_AdminOpensAnyLead(t *testing.T) {
 
 		h.as(role).
 			GET("/api/v1/admin/leads/lead-milik-a").
+			expectCode(http.StatusOK)
+	}
+}
+
+// Cacat yang sama persis juga ada pada peserta, dan ditemukan justru dengan
+// mencari pola yang sudah dikenali: daftarnya disaring lewat lead yang
+// menurunkannya, detailnya tidak memeriksa apa pun.
+
+func seedParticipantOwnedBy(h *harness, participantID, leadID, consultantID string) {
+	h.Leads.Seed(domainLead.Lead{
+		ID: leadID, Name: "Prospek Milik Orang Lain", Phone: "628770000009",
+		PackageID: "package-1", Status: "peserta", AssignedTo: &consultantID,
+		CreatedAt: time.Now(),
+	})
+	lead := leadID
+	h.Participants.Seed(domainParticipant.Participant{
+		ID: participantID, LeadID: &lead, BatchID: "batch-1",
+		Name: "Peserta Milik Orang Lain", Phone: "628770000009", IsActive: true,
+	})
+}
+
+func TestParticipantDetail_KonsultanCannotOpenSomeoneElsesParticipant(t *testing.T) {
+	h := newHarness(t)
+	seedParticipantOwnedBy(h, "peserta-milik-a", "lead-milik-a", "user-konsultan")
+
+	h.asUser("konsultan-b", "konsultan").
+		GET("/api/v1/admin/participants/peserta-milik-a").
+		expectCode(http.StatusNotFound)
+}
+
+func TestParticipantDetail_KonsultanStillOpensTheirOwn(t *testing.T) {
+	h := newHarness(t)
+	seedParticipantOwnedBy(h, "peserta-milik-a", "lead-milik-a", "user-konsultan")
+
+	h.as("konsultan").
+		GET("/api/v1/admin/participants/peserta-milik-a").
+		expectCode(http.StatusOK)
+}
+
+func TestParticipantDetail_AdminOpensAnyParticipant(t *testing.T) {
+	for _, role := range []string{"super_admin", "admin"} {
+		h := newHarness(t)
+		seedParticipantOwnedBy(h, "peserta-milik-a", "lead-milik-a", "user-konsultan")
+
+		h.as(role).
+			GET("/api/v1/admin/participants/peserta-milik-a").
 			expectCode(http.StatusOK)
 	}
 }
