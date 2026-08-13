@@ -263,21 +263,35 @@ func TestAdminBatches_RejectsRequestWithoutToken(t *testing.T) {
 // The airport page needs this read, so tour_leader is on the allow-list even
 // though every other package route is ops-only. konsultan is not: nothing a
 // konsultan does asks for a departure outside the lead they are converting.
+// Setiap peran staf memilih keberangkatan di suatu tempat, jadi setiap peran
+// staf boleh membacanya.
+//
+// Konsultan mula-mula tidak termasuk, dengan alasan satu-satunya tempat ia
+// memilih batch adalah dialog konversi yang memakai daftar per-paket. Alasan itu
+// melewatkan filter keberangkatan di halaman Peserta — halaman yang memang boleh
+// dibuka konsultan — sehingga baginya filter itu hanya menampilkan "Gagal memuat
+// daftar keberangkatan".
 func TestAdminBatches_RoleMatrix(t *testing.T) {
-	allowed := map[string]bool{"super_admin": true, "admin": true, "tour_leader": true}
 	for _, role := range staffRoles {
 		t.Run(role, func(t *testing.T) {
 			h := newHarness(t)
 			seedTwoPackagesOfBatches(h)
 
-			res := h.as(role).GET("/api/v1/admin/batches")
-			if allowed[role] {
-				res.expectCode(http.StatusOK)
-			} else {
-				res.expectCode(http.StatusForbidden)
-			}
+			h.as(role).GET("/api/v1/admin/batches").expectCode(http.StatusOK)
 		})
 	}
+}
+
+// Membuka daftar keberangkatan tidak boleh ikut membuka penanganan bandara.
+// Keduanya sempat berbagi grup rute, sehingga memperluas yang satu berisiko
+// memperluas yang lain tanpa ada yang memutuskannya.
+func TestAdminBatches_DoesNotOpenAirportHandling(t *testing.T) {
+	h := newHarness(t)
+	seedTwoPackagesOfBatches(h)
+
+	h.as("konsultan").GET("/api/v1/admin/batches").expectCode(http.StatusOK)
+	h.as("konsultan").GET("/api/v1/admin/airport/checklist?batch_id=batch-1").
+		expectCode(http.StatusForbidden)
 }
 
 // A head count belongs to the staff who manage the departure. The per-package

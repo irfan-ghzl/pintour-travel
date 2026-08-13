@@ -45,14 +45,14 @@ dibaca dari dokumen — mengikuti cara yang sama yang dipakai untuk
 
 | Endpoint | Diberikan kepada | Alasan |
 | --- | --- | --- |
-| `GET /api/v1/admin/batches` | grup **airport** — `super_admin`, `admin`, `tour_leader` | Halaman Airport Handling adalah alasan endpoint ini ada, dan `tour_leader` bekerja di halaman itu. Isinya tidak melebihi apa yang sudah dilihat peran itu: `GET /admin/airport/checklist` sudah menyebut nama dan nomor WhatsApp peserta satu per satu, sedangkan endpoint ini hanya menyebut tanggal keberangkatan, nama paket, status, kuota, dan cacahnya. `konsultan` tidak diberi akses karena satu-satunya tempat ia memilih batch adalah dialog konversi, yang dibatasi ke paket lead dan karena itu memakai daftar per-paket. |
+| `GET /api/v1/admin/batches` | grup **pickers** — `super_admin`, `admin`, `konsultan`, `tour_leader` | Setiap peran staf memilih keberangkatan di suatu tempat, jadi setiap peran staf boleh membacanya. Isinya tidak melebihi yang sudah beredar: tanggal keberangkatan, nama paket, status, dan kuota sudah dikirim ke pengunjung anonim lewat `GET /packages/{slug}`; tambahannya hanya jumlah peserta terdaftar, dan staf penjualan sudah melihat daftar pesertanya sendiri. Ditulis lengkap alih-alih memakai grup dasar `admin`, supaya peran yang ditambahkan nanti tidak ikut diberi akses tanpa ada yang memutuskannya. |
 | `GET /api/v1/admin/packages/{package_id}/batches` | **dipindahkan** dari grup ops ke grup **sales** — `super_admin`, `admin`, `konsultan` | Ditemukan saat review, lalu dibuktikan: rute ini menjawab **403 kepada `konsultan`**, padahal `POST /admin/participants/convert` ada di grup sales dan memang boleh dipakai konsultan. Artinya dialog konversi — inti pekerjaan harian konsultan — tidak pernah bisa menampilkan satu batch pun baginya sejak dropdown-nya dibuat; yang tampil adalah "Gagal memuat daftar keberangkatan". Membukanya untuk sales tidak menyingkap apa pun yang baru: baris yang sama sudah dikirim ke pengunjung anonim lewat `GET /packages/{slug}` di katalog publik. Membuat dan mengubah batch tetap ops-only, karena di situlah kewenangannya. |
 
 **Usulan baris tambahan / perubahan untuk §5.3:**
 
 | Fitur | super_admin | admin | konsultan | tour_leader |
 | --- | --- | --- | --- | --- |
-| Daftar keberangkatan lintas paket (baca) — **baris baru** | ✓ | ✓ | — | ✓ |
+| Daftar keberangkatan lintas paket (baca) — **baris baru** | ✓ | ✓ | ✓ | ✓ |
 | Daftar keberangkatan satu paket (baca) — **baris berubah** | ✓ | ✓ | ✓ (dulu —) | — |
 
 Kedua baris ini adalah **usulan**: §5.3 hidup di PRD yang gitignored, sehingga
@@ -60,6 +60,25 @@ tidak ada berkas ter-track di repo ini yang bisa diubah. Yang dijamin adalah
 keputusannya tidak diambil diam-diam — ia tertulis di sini, dan dijaga test.
 Preseden bentuk yang sama ada di
 `.scratch/prd-alignment/issues/04-kontrol-akses.md`.
+
+### Koreksi setelah tiket ini ditutup
+
+`konsultan` mula-mula **tidak** diberi akses, dengan alasan yang tertulis di
+atas: satu-satunya tempat ia memilih batch dianggap dialog konversi, yang memakai
+daftar per-paket. Alasan itu melewatkan **filter keberangkatan di halaman
+Peserta** — halaman yang memang boleh dibuka konsultan — sehingga baginya filter
+itu hanya menampilkan "Gagal memuat daftar keberangkatan".
+
+Bentuknya sama persis dengan cacat yang ditemukan tiket ini pada rute batches
+per-paket: sebuah rute ditempatkan mengikuti satu pemakaian yang terpikir, lalu
+pemakaian kedua ditemukan belakangan oleh orang yang memakainya. Karena itu
+grupnya kini menyebut keempat peran, bukan diperluas satu per satu setiap kali
+ada yang mengeluh.
+
+Memberi akses ke daftar keberangkatan **tidak** membuka penanganan bandara:
+seluruh rute `/admin/airport/*` tetap di grup airport, dan menu bandara tetap
+tidak muncul di sidebar konsultan. Dijaga
+`TestAdminBatches_DoesNotOpenAirportHandling`.
 
 Dibuktikan oleh `TestAdminBatches_RoleMatrix`,
 `TestAdminBatches_RejectsRequestWithoutToken`, dan

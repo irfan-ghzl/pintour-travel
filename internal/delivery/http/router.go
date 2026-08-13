@@ -167,6 +167,12 @@ func RegisterRoutes(e *echo.Echo, svc Services) {
 	sales := api.Group("/admin", jwtMW, RequireRole("super_admin", "admin", "konsultan"))
 	// Airport: + tour_leader — departure handling.
 	airportG := api.Group("/admin", jwtMW, RequireRole("super_admin", "admin", "tour_leader"))
+	// Pickers: every staff role, because naming a departure is what each of them
+	// does instead of typing its UUID. Ditulis lengkap alih-alih memakai grup
+	// dasar `admin`, supaya peran yang ditambahkan nanti tidak ikut diberi akses
+	// tanpa ada yang memutuskannya.
+	pickers := api.Group("/admin", jwtMW,
+		RequireRole("super_admin", "admin", "konsultan", "tour_leader"))
 	// Super: super_admin only — user management.
 	super := api.Group("/admin", jwtMW, RequireRole("super_admin"))
 
@@ -225,7 +231,15 @@ func RegisterRoutes(e *echo.Echo, svc Services) {
 	// (recorded in .scratch/admin-pickers/issues/01-airport-pemilih-batch.md).
 	// It answers with what a picker shows and nothing a listing does not already
 	// expose: departure date, package name, status, quota, and head count.
-	airportG.GET("/batches", pkgH.AdminListBatches)
+	//
+	// Konsultan ikut, dan itu koreksi atas keputusan sebelumnya. Endpoint ini
+	// mula-mula ditempatkan di grup airport dengan alasan satu-satunya tempat
+	// konsultan memilih batch adalah dialog konversi, yang memakai daftar
+	// per-paket. Alasan itu melewatkan filter keberangkatan di halaman Peserta —
+	// halaman yang memang boleh dibuka konsultan — sehingga baginya filter itu
+	// hanya menampilkan "Gagal memuat daftar keberangkatan". Bentuk cacat yang
+	// sama persis dengan yang ditemukan pada rute batches per-paket sebelumnya.
+	pickers.GET("/batches", pkgH.AdminListBatches)
 
 	// Leads / CRM — konsultan included (handler scopes to own leads)
 	sales.GET("/leads", leadH.ListLeads)
