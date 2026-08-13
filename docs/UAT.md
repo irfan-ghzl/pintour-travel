@@ -137,12 +137,18 @@ Langkah 3 sengaja dilakukan admin, bukan peserta. Portal baru terbuka setelah
 pembayaran dikonfirmasi — sebelum itu peserta tidak bisa masuk sama sekali, jadi
 bukti transfer masuk lewat konsultan (WhatsApp) dan diunggahkan oleh admin.
 
-> **Batasan yang diketahui.** Konfirmasi pembayaran bersifat penuh, bukan
-> sebagian. Endpoint-nya tidak menerima nominal — invoice hanya punya kolom
-> `amount`, tanpa sisa tagihan — sehingga konfirmasi apa pun menjadikannya lunas.
-> Nominal yang dikirim di badan permintaan diabaikan diam-diam. Alur DP yang
-> tertulis di syarat paket ("DP minimum Rp 5 juta, pelunasan H-30") karena itu
-> belum tercermin di data. Jangan mendemokan pembayaran bertahap.
+> **Batasan yang diketahui — hanya pada jalur manual.** Sisa tagihan sebenarnya
+> ada: ia diturunkan dari jumlah bukti transfer berstatus *disetujui*, bukan dari
+> kolom di tabel. Pembayaran online memakainya dengan benar — Midtrans hanya
+> menagih sisanya, dan menolak dengan `INVOICE_PAID` begitu bukti-bukti itu
+> menutup seluruh tagihan. Diuji: invoice Rp 10 juta dengan bukti Rp 4 juta
+> disetujui menghasilkan tagihan sisa; ditambah bukti Rp 6 juta, pembayaran
+> online ditolak 409.
+>
+> Yang bersifat penuh hanyalah **konfirmasi manual** oleh admin: endpoint-nya
+> tidak menerima nominal dan selalu menandai lunas, sehingga nominal yang dikirim
+> di badan permintaan diabaikan diam-diam. Untuk mendemokan pembayaran bertahap,
+> pakai jalur bukti transfer — bukan tombol konfirmasi.
 
 ---
 
