@@ -80,6 +80,11 @@ export interface PackageBatch {
   updated_at: string
   package_name: string
   tour_leader_name?: string
+  // Peserta yang sudah terdaftar pada keberangkatan ini. Dihitung oleh kueri,
+  // bukan kolom, dan hanya disertakan oleh daftar admin lintas paket — katalog
+  // publik tidak diberi tahu berapa kursi yang sudah terjual. Tidak ada
+  // (`undefined`) karena itu berarti "tidak dihitung", bukan "belum ada".
+  participant_count?: number
 }
 
 export interface PackageDetailResponse {

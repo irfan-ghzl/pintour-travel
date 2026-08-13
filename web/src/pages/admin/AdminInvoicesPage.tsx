@@ -4,7 +4,10 @@ import { Plus, CheckCircle, Eye, XCircle, FileText } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api, { openSignedFile } from '../../utils/api'
 import { formatDate } from '../../utils/date'
-import type { Invoice, InvoiceStatus, PaginatedResponse, CreateInvoiceRequest, PaymentProof } from '../../types'
+import ParticipantPicker from '../../components/ParticipantPicker'
+import type {
+  Invoice, InvoiceStatus, PaginatedResponse, CreateInvoiceRequest, PaymentProof, Participant,
+} from '../../types'
 
 const STATUS_COLORS: Record<InvoiceStatus, string> = {
   diterbitkan: 'bg-blue-100 text-blue-700',
@@ -19,10 +22,28 @@ export default function AdminInvoicesPage() {
   const [page, setPage] = useState(1)
   const [showCreate, setShowCreate] = useState(false)
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null)
+  // Invoice utama sudah terbit otomatis saat konversi lead. Formulir ini untuk
+  // tagihan tambahan di luar paket — upgrade kamar, penalti, layanan ekstra.
+  //
+  // Batch tidak lagi ditanyakan: setiap peserta sudah terikat pada satu batch,
+  // jadi menurunkannya dari peserta yang dipilih menghapus seluruh kelas
+  // kesalahan "peserta A ditagih pada batch B".
+  const [invoiceFor, setInvoiceFor] = useState<Participant | null>(null)
   const [form, setForm] = useState<CreateInvoiceRequest>({
     participant_id: '', batch_id: '', amount: 0, due_date: '', notes: '',
   })
   const qc = useQueryClient()
+
+  function pickInvoiceParticipant(p: Participant | null) {
+    setInvoiceFor(p)
+    setForm((f) => ({ ...f, participant_id: p?.id ?? '', batch_id: p?.batch_id ?? '' }))
+  }
+
+  function closeCreate() {
+    setShowCreate(false)
+    setInvoiceFor(null)
+    setForm({ participant_id: '', batch_id: '', amount: 0, due_date: '', notes: '' })
+  }
 
   const params = new URLSearchParams({ page: String(page), per_page: '20' })
   if (statusFilter) params.set('status', statusFilter)
@@ -37,7 +58,7 @@ export default function AdminInvoicesPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['invoices'] })
       toast.success('Invoice berhasil diterbitkan dan dikirim via WA')
-      setShowCreate(false)
+      closeCreate()
     },
     onError: (e: any) => toast.error(e.response?.data?.message ?? 'Gagal membuat invoice'),
   })
@@ -166,19 +187,33 @@ export default function AdminInvoicesPage() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl w-full max-w-md p-6 space-y-4">
             <div className="flex justify-between">
-              <h3 className="font-semibold">Buat Invoice</h3>
-              <button onClick={() => setShowCreate(false)} className="text-gray-400">✕</button>
+              <div>
+                <h3 className="font-semibold">Buat Invoice Tambahan</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Untuk tagihan di luar paket. Invoice paket sudah terbit otomatis saat konversi lead.
+                </p>
+              </div>
+              <button onClick={closeCreate} className="text-gray-400">✕</button>
             </div>
             <div className="space-y-3">
               <div>
-                <label className="text-xs font-medium text-gray-600 block mb-1">Participant ID</label>
-                <input className="w-full border rounded-lg px-3 py-2 text-sm" placeholder="UUID peserta..."
-                  value={form.participant_id} onChange={(e) => setForm({ ...form, participant_id: e.target.value })} />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-gray-600 block mb-1">Batch ID</label>
-                <input className="w-full border rounded-lg px-3 py-2 text-sm" placeholder="UUID batch..."
-                  value={form.batch_id} onChange={(e) => setForm({ ...form, batch_id: e.target.value })} />
+                <label htmlFor="invoice-participant" className="text-xs font-medium text-gray-600 block mb-1">
+                  Peserta
+                </label>
+                <ParticipantPicker
+                  id="invoice-participant"
+                  selected={invoiceFor}
+                  onChange={pickInvoiceParticipant}
+                />
+                {/* Keterangan, bukan masukan: batch mengikuti peserta yang
+                    dipilih, sehingga tidak mungkin dipasangkan ke batch yang
+                    bukan miliknya. */}
+                {invoiceFor && (
+                  <p className="text-xs text-gray-500 mt-1.5">
+                    {invoiceFor.package_name || 'Paket tidak diketahui'} &middot; berangkat{' '}
+                    {formatDate(invoiceFor.batch_departure_date)}
+                  </p>
+                )}
               </div>
               <div>
                 <label className="text-xs font-medium text-gray-600 block mb-1">Total Tagihan (Rp)</label>

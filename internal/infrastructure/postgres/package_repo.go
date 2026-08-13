@@ -267,11 +267,31 @@ const batchCols = `pb.id,pb.package_id,pb.departure_date,pb.return_date,pb.quota
 	pb.price_single,pb.price_double,pb.price_triple,pb.status,pb.tour_leader_id,
 	pb.created_at,pb.updated_at,p.name,COALESCE(u.name,''),COALESCE(pb.wa_group_link,'')`
 
+// batchParticipantCount counts the live participants on a departure. It is a
+// correlated subquery rather than a join so the count stays a count: a join
+// would multiply the batch row and force a GROUP BY over every selected column.
+const batchParticipantCount = `(SELECT COUNT(*) FROM participants pt
+	WHERE pt.batch_id=pb.id AND pt.deleted_at IS NULL)`
+
 func scanBatch(s interface{ Scan(...interface{}) error }, b *pkg.PackageBatch) error {
 	return s.Scan(&b.ID, &b.PackageID, &b.DepartureDate, &b.ReturnDate,
 		&b.Quota, &b.PriceSingle, &b.PriceDouble, &b.PriceTriple, &b.Status,
 		&b.TourLeaderID, &b.CreatedAt, &b.UpdatedAt, &b.PackageName, &b.TourLeaderName,
 		&b.WaGroupLink)
+}
+
+// scanBatchWithCount reads a batch row together with its head count, which only
+// the admin cross-package listing selects.
+func scanBatchWithCount(s interface{ Scan(...interface{}) error }, b *pkg.PackageBatch) error {
+	var count int
+	if err := s.Scan(&b.ID, &b.PackageID, &b.DepartureDate, &b.ReturnDate,
+		&b.Quota, &b.PriceSingle, &b.PriceDouble, &b.PriceTriple, &b.Status,
+		&b.TourLeaderID, &b.CreatedAt, &b.UpdatedAt, &b.PackageName, &b.TourLeaderName,
+		&b.WaGroupLink, &count); err != nil {
+		return err
+	}
+	b.ParticipantCount = &count
+	return nil
 }
 
 func (r *packageBatchRepo) GetByID(ctx context.Context, id string) (*pkg.PackageBatch, error) {
@@ -288,34 +308,10 @@ func (r *packageBatchRepo) GetByID(ctx context.Context, id string) (*pkg.Package
 	return &b, nil
 }
 
-func (r *packageBatchRepo) List(ctx context.Context, f pkg.BatchFilter) ([]pkg.PackageBatch, error) {
-	where := "WHERE pb.deleted_at IS NULL"
-	args := []interface{}{}
-	i := 1
-	if f.PackageID != nil {
-		where += fmt.Sprintf(" AND pb.package_id=$%d", i)
-		args = append(args, *f.PackageID)
-		i++
-	}
-	if f.Status != nil {
-		where += fmt.Sprintf(" AND pb.status=$%d", i)
-		args = append(args, *f.Status)
-		i++
-	}
-	_ = i
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT `+batchCols+`
-		FROM package_batches pb
-		JOIN packages p ON p.id=pb.package_id
-		LEFT JOIN users u ON u.id=pb.tour_leader_id
-		`+where+` ORDER BY pb.departure_date`, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanBatches(rows)
-}
-
+// ListByPackage serves both the admin batch management screen and the PUBLIC
+// catalogue (GET /packages/{slug}), which is why it does not count participants:
+// how many seats a departure has sold is not something an anonymous visitor was
+// ever told, and adding it here would have disclosed it to everyone.
 func (r *packageBatchRepo) ListByPackage(ctx context.Context, packageID string) ([]pkg.PackageBatch, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT `+batchCols+`
@@ -329,6 +325,75 @@ func (r *packageBatchRepo) ListByPackage(ctx context.Context, packageID string) 
 	}
 	defer rows.Close()
 	return scanBatches(rows)
+}
+
+// ListAll lists departures across every package, newest-relevant first.
+//
+// "Nearest departure first" is two keys, not one: departures still to come sort
+// ahead of those already gone, and inside each half the row closest to today
+// leads. Plain ascending order would bury next week's departure under every
+// batch the agency ever ran.
+func (r *packageBatchRepo) ListAll(ctx context.Context, f pkg.BatchFilter) ([]pkg.PackageBatch, int, error) {
+	where := "WHERE pb.deleted_at IS NULL AND p.deleted_at IS NULL"
+	args := []interface{}{}
+	i := 1
+
+	if f.PackageID != nil {
+		where += fmt.Sprintf(" AND pb.package_id=$%d", i)
+		args = append(args, *f.PackageID)
+		i++
+	}
+	if f.Status != nil {
+		where += fmt.Sprintf(" AND pb.status=$%d", i)
+		args = append(args, *f.Status)
+		i++
+	}
+	if f.Upcoming {
+		where += " AND pb.departure_date >= CURRENT_DATE"
+	}
+	if f.Search != nil && *f.Search != "" {
+		where += fmt.Sprintf(" AND p.name ILIKE $%d", i)
+		args = append(args, "%"+*f.Search+"%")
+		i++
+	}
+
+	const from = ` FROM package_batches pb
+		JOIN packages p ON p.id=pb.package_id
+		LEFT JOIN users u ON u.id=pb.tour_leader_id `
+
+	var total int
+	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*)"+from+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	if f.Page < 1 {
+		f.Page = 1
+	}
+	if f.PerPage < 1 {
+		f.PerPage = 20
+	}
+	args = append(args, f.PerPage, (f.Page-1)*f.PerPage)
+
+	q := fmt.Sprintf(`SELECT `+batchCols+`,`+batchParticipantCount+from+where+`
+		ORDER BY (pb.departure_date < CURRENT_DATE),
+		         ABS(pb.departure_date - CURRENT_DATE)
+		LIMIT $%d OFFSET $%d`, i, i+1)
+
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var batches []pkg.PackageBatch
+	for rows.Next() {
+		var b pkg.PackageBatch
+		if err := scanBatchWithCount(rows, &b); err != nil {
+			return nil, 0, err
+		}
+		batches = append(batches, b)
+	}
+	return batches, total, rows.Err()
 }
 
 func scanBatches(rows *sql.Rows) ([]pkg.PackageBatch, error) {

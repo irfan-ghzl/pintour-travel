@@ -1,13 +1,24 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Search } from 'lucide-react'
+import { Search, X } from 'lucide-react'
 import api from '../../utils/api'
-import type { Participant, PaginatedResponse } from '../../types'
+import BatchPicker, { batchLabel } from '../../components/BatchPicker'
+import type { PackageBatch, Participant, PaginatedResponse } from '../../types'
 
 export default function AdminParticipantsPage() {
   const [search, setSearch] = useState('')
+  // Batch dipilih lewat tanggal keberangkatan dan nama paketnya, bukan diketik
+  // sebagai UUID. Yang dikirim ke server tetap batch_id.
   const [batchID, setBatchID] = useState('')
+  const [batch, setBatch] = useState<PackageBatch | null>(null)
+  const [upcomingOnly, setUpcomingOnly] = useState(true)
   const [page, setPage] = useState(1)
+
+  function clearBatchFilter() {
+    setBatchID('')
+    setBatch(null)
+    setPage(1)
+  }
 
   const params = new URLSearchParams({ page: String(page), per_page: '20' })
   if (search) params.set('search', search)
@@ -31,7 +42,7 @@ export default function AdminParticipantsPage() {
       </div>
 
       {/* Filters */}
-      <div className="flex gap-3 flex-wrap">
+      <div className="flex gap-3 flex-wrap items-start">
         <div className="relative">
           <Search className="absolute left-3 top-2.5 text-gray-400" size={14} />
           <input
@@ -41,13 +52,48 @@ export default function AdminParticipantsPage() {
             onChange={(e) => { setSearch(e.target.value); setPage(1) }}
           />
         </div>
-        <input
-          className="border rounded-lg px-3 py-2 text-sm"
-          placeholder="Filter Batch ID..."
-          value={batchID}
-          onChange={(e) => { setBatchID(e.target.value); setPage(1) }}
-        />
+        <div className="space-y-1">
+          <BatchPicker
+            className="w-72"
+            value={batchID}
+            upcomingOnly={upcomingOnly}
+            onChange={(id, picked) => { setBatchID(id); setBatch(picked ?? null); setPage(1) }}
+            placeholder="Semua keberangkatan"
+            emptyLabel={
+              upcomingOnly
+                ? 'Tidak ada keberangkatan mendatang — centang di bawah untuk melihat yang sudah lewat.'
+                : 'Belum ada keberangkatan yang bisa dipilih.'
+            }
+          />
+          <label className="flex items-center gap-1.5 text-xs text-gray-500">
+            <input
+              type="checkbox"
+              checked={!upcomingOnly}
+              onChange={(e) => { setUpcomingOnly(!e.target.checked); clearBatchFilter() }}
+            />
+            Termasuk keberangkatan yang sudah lewat
+          </label>
+        </div>
       </div>
+
+      {/* Filter yang sedang aktif, supaya daftar yang menyusut tidak terbaca
+          sebagai "pesertanya memang cuma segini". */}
+      {batchID && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-gray-500">Disaring ke keberangkatan:</span>
+          <span className="inline-flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-full pl-3 pr-1.5 py-1 text-xs font-medium">
+            {batch ? batchLabel(batch, true) : batchID}
+            <button
+              type="button"
+              aria-label="Hapus filter keberangkatan"
+              onClick={clearBatchFilter}
+              className="p-0.5 text-emerald-600 hover:text-emerald-900"
+            >
+              <X size={13} />
+            </button>
+          </span>
+        </div>
+      )}
 
       {/* Table */}
       <div className="bg-white rounded-xl border overflow-hidden">

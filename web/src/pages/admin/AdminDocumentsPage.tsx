@@ -7,10 +7,13 @@ import api, {
   // TODO(ocr-v2.0-F3): getDocumentOCR, applyParticipantNIK — aktifkan ketika billing on
   getDocumentOCR, applyParticipantNIK,
 } from '../../utils/api'
-import type { Document, DocumentStatus, DocumentSummary, PaginatedResponse } from '../../types'
+import type {
+  Document, DocumentStatus, DocumentSummary, PaginatedResponse, Participant,
+} from '../../types'
 import StatusBadge from '../../components/StatusBadge'
 import RejectModal from '../../components/RejectModal'
 import ProgressBar from '../../components/ProgressBar'
+import ParticipantPicker from '../../components/ParticipantPicker'
 
 const DOC_TYPE_LABELS: Record<string, string> = {
   passport: 'Paspor', ktp: 'KTP', rekening_koran: 'Rekening Koran',
@@ -21,7 +24,11 @@ const DOC_TYPES = Object.keys(DOC_TYPE_LABELS)
 export default function AdminDocumentsPage() {
   const [statusFilter, setStatusFilter] = useState<DocumentStatus | ''>('menunggu')
   const [typeFilter, setTypeFilter] = useState('')
-  const [participantID, setParticipantID] = useState('')
+  // Antrean dipersempit dengan memilih peserta lewat nama atau nomor WhatsApp.
+  // Parameter yang dikirim tetap participant_id; hanya cara memperolehnya yang
+  // berubah — tidak ada lagi UUID yang harus disalin dari basis data.
+  const [participant, setParticipant] = useState<Participant | null>(null)
+  const participantID = participant?.id ?? ''
   const [rejectDoc, setRejectDoc] = useState<Document | null>(null)
   const [ocrDoc, setOcrDoc] = useState<Document | null>(null)
   const [page, setPage] = useState(1)
@@ -74,12 +81,12 @@ export default function AdminDocumentsPage() {
       <h2 className="text-lg font-semibold text-gray-800">Review Dokumen Peserta</h2>
 
       {/* Filters */}
-      <div className="flex gap-3 flex-wrap items-center">
-        <input
-          className="border rounded-lg px-3 py-2 text-sm w-56"
-          placeholder="Filter Participant ID..."
-          value={participantID}
-          onChange={(e) => { setParticipantID(e.target.value); setPage(1) }}
+      <div className="flex gap-3 flex-wrap items-start">
+        <ParticipantPicker
+          className="w-64"
+          selected={participant}
+          onChange={(p) => { setParticipant(p); setPage(1) }}
+          placeholder="Saring ke satu peserta..."
         />
         <select
           className="border rounded-lg px-3 py-2 text-sm"

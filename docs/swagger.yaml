@@ -93,6 +93,21 @@ paths:
       summary: Daftar checklist airport per batch
       tags:
       - airport
+  /admin/airport/checklist/init:
+    post:
+      consumes:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Siapkan baris checklist untuk seluruh peserta batch
+      tags:
+      - airport
   /admin/airport/confirm-departure:
     post:
       consumes:
@@ -202,6 +217,46 @@ paths:
       summary: Laporan post-handling sebagai PDF (FR-AIR-06)
       tags:
       - airport
+  /admin/batches:
+    get:
+      description: Sumber data pemilih batch di halaman Peserta, Invoice, dan Airport
+        Handling — tidak ada layar admin yang menuntut operator mengetahui UUID batch.
+      parameters:
+      - description: Hanya keberangkatan yang belum lewat
+        in: query
+        name: upcoming
+        type: boolean
+      - description: Status batch (tersedia/penuh/ditutup)
+        in: query
+        name: status
+        type: string
+      - description: Cocokkan nama paket
+        in: query
+        name: search
+        type: string
+      - default: 1
+        description: Halaman
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Per halaman
+        in: query
+        name: per_page
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Daftar keberangkatan lintas paket (admin)
+      tags:
+      - admin-packages
   /admin/chatbot-logs:
     get:
       responses: {}
@@ -791,6 +846,45 @@ paths:
       summary: Konversi leads 'deal' menjadi peserta aktif (FR-CRM-06)
       tags:
       - participants
+  /admin/privacy/deletion-requests:
+    get:
+      parameters:
+      - description: Filter status (menunggu/selesai/ditolak)
+        in: query
+        name: status
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Antrean permintaan penghapusan data peserta (§25.5)
+      tags:
+      - privacy
+  /admin/privacy/deletion-requests/{id}/process:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Deletion request ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Setujui atau tolak permintaan penghapusan data (§25.5)
+      tags:
+      - privacy
   /admin/reports/export:
     get:
       parameters:

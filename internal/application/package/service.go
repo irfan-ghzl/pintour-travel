@@ -87,6 +87,12 @@ func (s *Service) ListBatches(ctx context.Context, packageID string) ([]domainPk
 	return s.batches.ListByPackage(ctx, packageID)
 }
 
+// ListAllBatches lists departures across every package, for the admin pickers
+// that must offer a departure without a package being chosen first.
+func (s *Service) ListAllBatches(ctx context.Context, f domainPkg.BatchFilter) ([]domainPkg.PackageBatch, int, error) {
+	return s.batches.ListAll(ctx, f)
+}
+
 var nonAlpha = regexp.MustCompile(`[^a-z0-9]+`)
 
 func toSlug(s string) string {

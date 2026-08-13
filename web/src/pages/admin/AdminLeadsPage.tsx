@@ -3,7 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Search, RefreshCw, ChevronRight, UserPlus, MessageSquare, Activity } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../../utils/api'
-import type { Lead, LeadStatus, LeadNote, LeadStatusChange, PaginatedResponse, WANotification, Participant, PackageBatch, ConvertLeadRequest } from '../../types'
+import BatchPicker from '../../components/BatchPicker'
+import type { Lead, LeadStatus, LeadNote, LeadStatusChange, PaginatedResponse, WANotification, Participant, ConvertLeadRequest } from '../../types'
 
 const STATUS_COLORS: Record<LeadStatus, string> = {
   baru: 'bg-blue-100 text-blue-700',
@@ -89,17 +90,6 @@ export default function AdminLeadsPage() {
       toast.success('Status diperbarui')
     },
     onError: () => toast.error('Gagal memperbarui status'),
-  })
-
-  // Batch yang ditawarkan hanya milik paket yang diminati lead. Dropdown ini
-  // sekaligus menutup satu kelas kesalahan yang dulu tidak dicegah apa pun:
-  // menempelkan UUID batch dari paket yang sama sekali berbeda.
-  const { data: batches } = useQuery({
-    queryKey: ['batches-for-convert', convertLead?.package_id],
-    queryFn: () =>
-      api.get<{ success: boolean; data: PackageBatch[] }>(`/admin/packages/${convertLead!.package_id}/batches`)
-        .then(r => r.data.data ?? []),
-    enabled: !!convertLead?.package_id,
   })
 
   const convertMut = useMutation({
@@ -532,25 +522,22 @@ export default function AdminLeadsPage() {
 
             <div className="space-y-3">
               <div>
-                <label className="text-xs font-medium text-gray-600 block mb-1">Batch Keberangkatan</label>
-                <select
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                <label htmlFor="convert-batch" className="text-xs font-medium text-gray-600 block mb-1">
+                  Batch Keberangkatan
+                </label>
+                {/* Pemilih yang sama dengan keempat halaman lain. Dibatasi ke
+                    paket yang diminati lead, sehingga "peserta ditempatkan pada
+                    batch paket lain" tetap tidak mungkin — dan batch penuh atau
+                    ditutup tetap terlihat beserta alasannya. */}
+                <BatchPicker
+                  id="convert-batch"
                   value={convertBatch}
-                  onChange={(e) => setConvertBatch(e.target.value)}
-                >
-                  <option value="">Pilih tanggal keberangkatan...</option>
-                  {(batches ?? []).map((b) => (
-                    <option key={b.id} value={b.id} disabled={b.status !== 'tersedia'}>
-                      {new Date(b.departure_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
-                      {b.status === 'tersedia' ? ` — kuota ${b.quota}` : ` — ${b.status}`}
-                    </option>
-                  ))}
-                </select>
-                {batches && batches.length === 0 && (
-                  <p className="text-xs text-red-600 mt-1">
-                    Paket ini belum punya batch keberangkatan. Tambahkan dulu di menu Paket.
-                  </p>
-                )}
+                  onChange={(id) => setConvertBatch(id)}
+                  packageId={convertLead.package_id}
+                  disableUnavailable
+                  placeholder="Pilih tanggal keberangkatan..."
+                  emptyLabel="Paket ini belum punya batch keberangkatan. Tambahkan dulu di menu Paket."
+                />
               </div>
               <div>
                 <label className="text-xs font-medium text-gray-600 block mb-1">Tipe Kamar</label>

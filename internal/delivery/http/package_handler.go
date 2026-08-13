@@ -188,6 +188,42 @@ func (h *PackageHandler) ListBatches(c echo.Context) error {
 	return c.JSON(http.StatusOK, ok(batches))
 }
 
+// AdminListBatches godoc
+// @Summary      Daftar keberangkatan lintas paket (admin)
+// @Description  Sumber data pemilih batch di halaman Peserta, Invoice, dan Airport Handling — tidak ada layar admin yang menuntut operator mengetahui UUID batch.
+// @Tags         admin-packages
+// @Security     BearerAuth
+// @Produce      json
+// @Param        upcoming query bool false "Hanya keberangkatan yang belum lewat"
+// @Param        status query string false "Status batch (tersedia/penuh/ditutup)"
+// @Param        search query string false "Cocokkan nama paket"
+// @Param        page query int false "Halaman" default(1)
+// @Param        per_page query int false "Per halaman" default(20)
+// @Success      200 {object} map[string]interface{}
+// @Router       /admin/batches [get]
+func (h *PackageHandler) AdminListBatches(c echo.Context) error {
+	f := domainPkg.BatchFilter{
+		Page:    queryInt(c, "page", 1),
+		PerPage: queryPageSize(c, "per_page", 20),
+		// Opt-in: the full history is the default, and a caller shortens the list
+		// by asking for it. Absent or unreadable means "everything", so a
+		// mistyped parameter never hides departures the caller expected to see.
+		Upcoming: c.QueryParam("upcoming") == "true" || c.QueryParam("upcoming") == "1",
+	}
+	if v := c.QueryParam("status"); v != "" {
+		f.Status = &v
+	}
+	if v := c.QueryParam("search"); v != "" {
+		f.Search = &v
+	}
+
+	batches, total, err := h.svc.ListAllBatches(c.Request().Context(), f)
+	if err != nil {
+		return serverErr(c, err)
+	}
+	return c.JSON(http.StatusOK, pageResponse(batches, total, f.Page, f.PerPage))
+}
+
 func (h *PackageHandler) CreateBatch(c echo.Context) error {
 	var b domainPkg.PackageBatch
 	if err := bindJSON(c, &b); err != nil {

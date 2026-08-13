@@ -206,9 +206,26 @@ func RegisterRoutes(e *echo.Echo, svc Services) {
 	ops.POST("/packages/:package_id/images", pkgH.AddImage)
 	ops.POST("/packages/:package_id/images/upload", uploadH.UploadPackageImage) // §16.2
 	ops.DELETE("/packages/:package_id/images/:image_id", pkgH.DeleteImage)
-	ops.GET("/packages/:package_id/batches", pkgH.ListBatches)
+	// Reading a package's departures sits on sales, not ops. A konsultan may
+	// convert their own lead (sales.POST /participants/convert below), and the
+	// conversion dialog cannot offer a departure it is forbidden to list — so
+	// this route answered 403 to the one role whose daily work needs it, and the
+	// dialog showed "gagal memuat" instead of a batch list.
+	//
+	// It discloses nothing new: the same rows already go to anonymous visitors
+	// through GET /packages/{slug} in the public catalogue. Creating and editing
+	// departures stays ops-only, which is where the actual authority is.
+	sales.GET("/packages/:package_id/batches", pkgH.ListBatches)
 	ops.POST("/packages/:package_id/batches", pkgH.CreateBatch)
 	ops.PUT("/batches/:id", pkgH.UpdateBatch)
+
+	// Departures across every package — the read behind every batch picker in the
+	// admin UI. It sits on the airport group rather than ops because the airport
+	// page needs it and a tour_leader works that page; §5.3 gains a row for it
+	// (recorded in .scratch/admin-pickers/issues/01-airport-pemilih-batch.md).
+	// It answers with what a picker shows and nothing a listing does not already
+	// expose: departure date, package name, status, quota, and head count.
+	airportG.GET("/batches", pkgH.AdminListBatches)
 
 	// Leads / CRM — konsultan included (handler scopes to own leads)
 	sales.GET("/leads", leadH.ListLeads)
