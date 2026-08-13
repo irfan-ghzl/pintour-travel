@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { BookOpen, Phone, Lock, Download, User, MessageCircle } from 'lucide-react'
-import { portalApi } from '../../utils/api'
+import toast from 'react-hot-toast'
+import { portalApi, downloadBriefingPDF } from '../../utils/api'
 import { usePortalMe, usePaymentSettled, paymentRequiredMessage } from '../../hooks/usePortalMe'
 import PortalLockedNotice from '../../components/PortalLockedNotice'
 import type { TourLeader } from '../../types'
@@ -82,19 +83,14 @@ export default function PortalBriefingPage() {
           <h2 className="font-semibold text-gray-800">Briefing Digital</h2>
         </div>
         {/* Download PDF briefing */}
-        <a
-          href="/api/v1/portal/briefing/pdf"
-          target="_blank"
-          rel="noopener noreferrer"
+        <button
+          onClick={() => downloadBriefingPDF().catch(() =>
+            toast.error('Gagal mengunduh briefing, coba lagi.'),
+          )}
           className="flex items-center gap-1.5 px-3 py-1.5 border border-emerald-600 text-emerald-700 text-xs rounded-lg hover:bg-emerald-50"
-          onClick={e => {
-            // Add portal token to request
-            const token = localStorage.getItem('portal_token')
-            if (!token) { e.preventDefault(); return }
-          }}
         >
           <Download size={13} /> Unduh PDF
-        </a>
+        </button>
       </div>
 
       {/* Tour Leader Profile */}

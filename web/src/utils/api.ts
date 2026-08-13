@@ -80,6 +80,26 @@ export const downloadTripInvoice = async (participantId: string) => {
   saveBlob(res.data as Blob, `invoice-${participantId.slice(0, 8)}.pdf`)
 }
 
+// downloadInvoicePDF fetches the invoice PDF of the current tour.
+//
+// Both this and the briefing below used to be plain <a href> links straight at
+// the API. A browser navigation cannot carry the X-Portal-Token header the
+// portal authenticates with, so every click landed on
+// {"error":"UNAUTHORIZED","message":"Token portal diperlukan"} — the download
+// was unreachable by construction, not merely broken.
+export const downloadInvoicePDF = async (invoiceId: string, invoiceNumber?: string) => {
+  const res = await portalApi.get(`/portal/invoices/${invoiceId}/pdf`, {
+    responseType: 'blob',
+  })
+  saveBlob(res.data as Blob, `${invoiceNumber || `invoice-${invoiceId.slice(0, 8)}`}.pdf`)
+}
+
+// downloadBriefingPDF fetches the pre-departure briefing for the current tour.
+export const downloadBriefingPDF = async () => {
+  const res = await portalApi.get('/portal/briefing/pdf', { responseType: 'blob' })
+  saveBlob(res.data as Blob, 'briefing-keberangkatan.pdf')
+}
+
 // ── OCR (v2.0 F6 — self-hosted Tesseract) ─────────────────────────────────────
 export interface OCRExtraction {
   document_number?: string

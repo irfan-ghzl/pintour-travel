@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { FileText, Upload, CheckCircle, Clock, Download, CreditCard, XCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { portalApi } from '../../utils/api'
+import { portalApi, downloadInvoicePDF } from '../../utils/api'
 import { formatDateLong } from '../../utils/date'
 import FileUpload from '../../components/FileUpload'
 import type { InvoiceStatus, PortalInvoice, PortalPaymentProof, UploadProofRequest } from '../../types'
@@ -155,14 +155,14 @@ export default function PortalInvoicePage() {
             <div className="flex flex-col gap-2 pt-1">
               <div className="flex gap-2">
                 {/* Download PDF */}
-                <a
-                  href={`/api/v1/portal/invoices/${inv.id}/pdf`}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <button
+                  onClick={() => downloadInvoicePDF(inv.id, inv.invoice_number).catch(() =>
+                    toast.error('Gagal mengunduh PDF, coba lagi.'),
+                  )}
                   className="flex items-center gap-1.5 px-3 py-2 border rounded-lg text-sm text-gray-600 hover:bg-gray-50"
                 >
                   <Download size={14} /> Unduh PDF
-                </a>
+                </button>
 
                 {/* Bayar online via Midtrans — primary action */}
                 {stillOwes(inv) && (
