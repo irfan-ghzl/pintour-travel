@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query'
 import { MapPin, Clock, ChevronDown, ChevronUp, Calendar } from 'lucide-react'
 import { portalApi } from '../../utils/api'
 import { formatDate, formatDateLong, WITH_WEEKDAY } from '../../utils/date'
+import { paymentRequiredMessage } from '../../hooks/usePortalMe'
+import PortalLockedNotice from '../../components/PortalLockedNotice'
 import type { ItineraryDay } from '../../types'
 
 interface ItineraryResponse {
@@ -23,7 +25,15 @@ export default function PortalItineraryPage() {
     queryFn: () =>
       portalApi.get<{ success: boolean; data: ItineraryResponse }>('/portal/itinerary')
         .then(r => r.data.data),
+    // A locked page is a settled answer, not a hiccup: retrying a 403 four times
+    // only delays the explanation the participant is owed.
+    retry: (_count, err) => paymentRequiredMessage(err) === null,
   })
+
+  // Reached by typing the URL, or by a menu that has not caught up yet. Either
+  // way the answer is the reason, not "gagal memuat".
+  const locked = paymentRequiredMessage(error)
+  if (locked) return <PortalLockedNotice title="Itinerary" reason={locked} />
 
   if (isLoading) return (
     <div className="space-y-3 animate-pulse">

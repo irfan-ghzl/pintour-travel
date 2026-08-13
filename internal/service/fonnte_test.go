@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 )
@@ -87,22 +86,7 @@ func TestFonnteTemplateHelpers(t *testing.T) {
 	}
 }
 
-// The portal credentials message is the only copy of the password that ever
-// leaves the system — portal accounts have no reset flow — so a message that
-// renders without it locks the participant out while reporting success. Asserted
-// on the rendered text because the gateway's address is not settable yet
-// (tiket 08), so nothing sent through Send can be observed.
-func TestPortalCredentialsMessageCarriesTheCredential(t *testing.T) {
-	const (
-		phone    = "628111000001"
-		password = "Xk7mQp2r"
-		portal   = "https://pintour.test/portal"
-	)
-	msg := portalCredentialsMessage("Budi", phone, password, portal)
-
-	for _, want := range []string{password, phone, portal, "Budi"} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("pesan kredensial tidak memuat %q:\n%s", want, msg)
-		}
-	}
-}
+// The credential message's own assertions live in portal_messages_test.go, which
+// covers what this file used to check — that the password, the number, and the
+// portal link all survive rendering — plus what the message now has to promise.
+// Two files asserting one renderer is one file too many.

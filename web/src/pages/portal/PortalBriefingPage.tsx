@@ -1,7 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
 import { BookOpen, Phone, Lock, Download, User, MessageCircle } from 'lucide-react'
 import { portalApi } from '../../utils/api'
-import type { PortalMeResponse, TourLeader } from '../../types'
+import { usePortalMe, usePaymentSettled, paymentRequiredMessage } from '../../hooks/usePortalMe'
+import PortalLockedNotice from '../../components/PortalLockedNotice'
+import type { TourLeader } from '../../types'
 
 interface BatchLeaderResponse {
   tour_leader?: TourLeader | null
@@ -9,19 +11,20 @@ interface BatchLeaderResponse {
 }
 
 export default function PortalBriefingPage() {
-  const { data, isLoading } = useQuery({
-    queryKey: ['portal-me'],
-    queryFn: () =>
-      portalApi.get<{ success: boolean; data: PortalMeResponse }>('/portal/me')
-        .then(r => r.data.data),
-  })
+  const { data, isLoading } = usePortalMe()
+  const settled = usePaymentSettled()
 
-  // FR-BRIEF-02/03: fetch tour leader + WA group link assigned to this batch (§6.1)
-  const { data: batchData } = useQuery({
+  // FR-BRIEF-02/03: fetch tour leader + WA group link assigned to this batch (§6.1).
+  // Withheld until the payment is confirmed too — a tour leader should not be
+  // called by someone whose departure is not yet certain (story 21) — so the
+  // query only runs once it would be answered.
+  const { data: batchData, error: batchError } = useQuery({
     queryKey: ['portal-batch-leader'],
     queryFn: () =>
       portalApi.get<{ success: boolean; data: BatchLeaderResponse | null }>('/portal/batch-leader')
         .then(r => r.data.data),
+    enabled: settled,
+    retry: (_count, err) => paymentRequiredMessage(err) === null,
   })
   const tlData = batchData?.tour_leader ?? null
   const waGroupLink = batchData?.wa_group_link
@@ -36,6 +39,18 @@ export default function PortalBriefingPage() {
       <div className="h-48 bg-gray-200 rounded-xl" />
     </div>
   )
+
+  // Two gates, and the participant is told which one they are behind. Payment
+  // comes first, matching the order the API applies them in: being told "H-14"
+  // when the real obstacle is an unpaid invoice would send them off to wait.
+  if (!settled || paymentRequiredMessage(batchError)) {
+    return (
+      <PortalLockedNotice
+        title="Briefing Digital"
+        reason="Materi briefing, kontak tour leader, dan grup WhatsApp batch terbuka setelah pembayaran Anda dikonfirmasi. Briefing sendiri baru aktif 14 hari sebelum keberangkatan."
+      />
+    )
+  }
 
   if (!briefingActive) {
     return (

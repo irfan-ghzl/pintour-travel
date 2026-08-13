@@ -1,12 +1,13 @@
 import { useQuery } from '@tanstack/react-query'
-import { Clock, FileText, BookOpen, CheckCircle, AlertCircle, Receipt, Shield, ChevronRight, History, Plane, Download } from 'lucide-react'
+import { Clock, FileText, BookOpen, CheckCircle, AlertCircle, Receipt, Shield, ChevronRight, History, Plane, Download, List, Lock } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { portalApi, getMyTrips, downloadTripInvoice, getTripItinerary } from '../../utils/api'
 // The itinerary is structured data rather than a rendered document, so the
 // archive hands it over as-is instead of inventing a layout for it here.
 import { saveJSON } from '../../utils/download'
-import type { PortalMeResponse, Invoice, Document } from '../../types'
+import { usePortalMe, usePaymentSettled, PAYMENT_LOCKED_TITLE } from '../../hooks/usePortalMe'
+import type { PortalInvoice, Document } from '../../types'
 
 interface Task {
   id: string
@@ -16,18 +17,37 @@ interface Task {
   urgent?: boolean
 }
 
+// LockedCard keeps a quick-access tile in place while its page is shut, saying
+// what it is waiting for. Removing the tile would make a participant conclude
+// the portal has no itinerary at all.
+function LockedCard({ icon, title }: { icon: React.ReactNode; title: string }) {
+  return (
+    <div
+      className="bg-gray-50 rounded-xl border border-dashed p-4 flex flex-col gap-2"
+      title={PAYMENT_LOCKED_TITLE}
+      aria-disabled="true"
+    >
+      <div className="flex items-center justify-between">
+        {icon}
+        <Lock size={14} className="text-gray-300" />
+      </div>
+      <p className="font-medium text-sm text-gray-400">{title}</p>
+      <p className="text-xs text-gray-400">{PAYMENT_LOCKED_TITLE}</p>
+    </div>
+  )
+}
+
 export default function PortalDashboardPage() {
-  const { data, isLoading } = useQuery({
-    queryKey: ['portal-me'],
-    queryFn: () =>
-      portalApi.get<{ success: boolean; data: PortalMeResponse }>('/portal/me')
-        .then(r => r.data.data),
-  })
+  const { data, isLoading } = usePortalMe()
+  // is_active means "payment confirmed" (§14.4). It is no longer what lets a
+  // participant in — it is what decides whether the travel content is theirs
+  // yet, and every screen reads that one answer from the same place.
+  const settled = usePaymentSettled()
 
   const { data: invoices } = useQuery({
     queryKey: ['portal-invoices-dash'],
     queryFn: () =>
-      portalApi.get<{ success: boolean; data: Invoice[] }>('/portal/invoices')
+      portalApi.get<{ success: boolean; data: PortalInvoice[] }>('/portal/invoices')
         .then(r => r.data.data ?? []),
   })
 
@@ -51,14 +71,16 @@ export default function PortalDashboardPage() {
 
   const participant = data?.participant
   const countdown = data?.days_to_depart
-  const briefingActive = data?.briefing_active
+  const briefingActive = data?.briefing_active && settled
 
   // FR-PORTAL-02: build task checklist
   const invList = invoices ?? []
   const docList = docs ?? []
 
-  const hasUnpaidInvoice = invList.some(inv => inv.status === 'diterbitkan' || inv.status === 'menunggu_bayar')
-  const hasPaidInvoice = invList.some(inv => inv.status === 'dibayar' || inv.status === 'lunas')
+  // "dibayar" is a partial payment (FR-INV-03), so it does not tick the box —
+  // calling a deposit "Pembayaran lunas" told someone who still owed millions
+  // that they were done. The confirmed flag is the one authority on that.
+  const hasUnpaidInvoice = invList.some(inv => inv.status !== 'lunas')
   const docTypes = ['passport', 'ktp', 'rekening_koran']
   const docStatus = docTypes.map(t => {
     const latest = docList.filter(d => d.document_type === t).at(-1)
@@ -69,7 +91,7 @@ export default function PortalDashboardPage() {
   // §5.6 Timeline stepper: Leads → Pembayaran → Dokumen → Briefing → Keberangkatan
   const steps = [
     { label: 'Leads', done: true },
-    { label: 'Pembayaran', done: hasPaidInvoice },
+    { label: 'Pembayaran', done: settled },
     { label: 'Dokumen', done: allDocsApproved },
     { label: 'Briefing', done: !!participant?.briefing_viewed },
     { label: 'Keberangkatan', done: countdown !== undefined && countdown <= 0 },
@@ -79,9 +101,9 @@ export default function PortalDashboardPage() {
   const tasks: Task[] = [
     {
       id: 'pay',
-      label: hasPaidInvoice ? 'Pembayaran lunas' : 'Bayar invoice & upload bukti transfer',
-      done: hasPaidInvoice,
-      urgent: hasUnpaidInvoice,
+      label: settled ? 'Pembayaran lunas' : 'Bayar invoice — online atau unggah bukti transfer',
+      done: settled,
+      urgent: !settled && hasUnpaidInvoice,
       link: '/portal/invoices',
     },
     ...docStatus.map(d => ({
@@ -246,27 +268,44 @@ export default function PortalDashboardPage() {
           <p className="text-xs text-gray-500">Upload & cek status</p>
         </Link>
 
-        <Link
-          to="/portal/itinerary"
-          className="bg-white rounded-xl border p-4 flex flex-col gap-2 hover:border-emerald-300 transition-colors"
-        >
-          <CheckCircle className="text-emerald-500" size={24} />
-          <p className="font-medium text-sm text-gray-800">Itinerary</p>
-          <p className="text-xs text-gray-500">Jadwal hari per hari</p>
-        </Link>
+        {/* Itinerary and briefing stay on the grid while they are shut, marked
+            rather than removed — a card that vanishes reads as a feature the
+            portal does not have. */}
+        {settled ? (
+          <Link
+            to="/portal/itinerary"
+            className="bg-white rounded-xl border p-4 flex flex-col gap-2 hover:border-emerald-300 transition-colors"
+          >
+            <List className="text-emerald-500" size={24} />
+            <p className="font-medium text-sm text-gray-800">Itinerary</p>
+            <p className="text-xs text-gray-500">Jadwal hari per hari</p>
+          </Link>
+        ) : (
+          <LockedCard
+            icon={<List className="text-gray-300" size={24} />}
+            title="Itinerary"
+          />
+        )}
 
-        <Link
-          to="/portal/briefing"
-          className={`bg-white rounded-xl border p-4 flex flex-col gap-2 transition-colors ${
-            briefingActive ? 'border-emerald-300 bg-emerald-50' : 'opacity-60'
-          }`}
-        >
-          <BookOpen className={briefingActive ? 'text-emerald-600' : 'text-gray-400'} size={24} />
-          <p className="font-medium text-sm text-gray-800">Briefing Digital</p>
-          <p className="text-xs text-gray-500">
-            {briefingActive ? '✓ Aktif – H-14' : 'Tersedia H-14'}
-          </p>
-        </Link>
+        {settled ? (
+          <Link
+            to="/portal/briefing"
+            className={`bg-white rounded-xl border p-4 flex flex-col gap-2 transition-colors ${
+              briefingActive ? 'border-emerald-300 bg-emerald-50' : 'opacity-60'
+            }`}
+          >
+            <BookOpen className={briefingActive ? 'text-emerald-600' : 'text-gray-400'} size={24} />
+            <p className="font-medium text-sm text-gray-800">Briefing Digital</p>
+            <p className="text-xs text-gray-500">
+              {briefingActive ? '✓ Aktif – H-14' : 'Tersedia H-14'}
+            </p>
+          </Link>
+        ) : (
+          <LockedCard
+            icon={<BookOpen className="text-gray-300" size={24} />}
+            title="Briefing Digital"
+          />
+        )}
 
         <Link
           to="/portal/insurance"
@@ -291,10 +330,12 @@ export default function PortalDashboardPage() {
       <div className="bg-white rounded-xl border p-4">
         <h3 className="font-semibold text-sm text-gray-700 mb-3">Status Persiapan</h3>
         <div className="space-y-2">
+          {/* The portal is open either way now, so this row reports what the flag
+              actually means: whether the payment has been confirmed. */}
           <div className="flex items-center justify-between text-sm">
-            <span className="text-gray-600">Status Portal</span>
-            <span className={`font-medium ${participant?.is_active ? 'text-green-600' : 'text-orange-500'}`}>
-              {participant?.is_active ? '✓ Aktif' : 'Menunggu Aktivasi'}
+            <span className="text-gray-600">Pembayaran</span>
+            <span className={`font-medium ${settled ? 'text-green-600' : 'text-orange-500'}`}>
+              {settled ? '✓ Dikonfirmasi' : 'Menunggu Konfirmasi'}
             </span>
           </div>
           <div className="flex items-center justify-between text-sm">

@@ -236,6 +236,28 @@ export interface Invoice {
   issued_by_name: string
 }
 
+// PortalInvoice is the invoice as the person who owes it sees it: the bill plus
+// how far it has actually been paid. The invoice row alone answers neither
+// question someone mid-payment asks — what happened to the transfer I sent, and
+// how much is left — so the portal page reads these instead.
+export interface PortalInvoice extends Invoice {
+  paid_amount: number
+  remaining_balance: number
+  proofs: PortalPaymentProof[]
+}
+
+// PortalPaymentProof is one receipt as its uploader sees it. The stored path is
+// deliberately absent: a participant opens their own file through the signed-URL
+// endpoint, by id (§19.2).
+export interface PortalPaymentProof {
+  id: string
+  amount_claimed: number
+  status: 'menunggu' | 'disetujui' | 'ditolak'
+  review_notes: string
+  uploaded_at: string
+  reviewed_at?: string
+}
+
 export interface PaymentProof {
   id: string
   invoice_id: string

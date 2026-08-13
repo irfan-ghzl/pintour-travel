@@ -195,8 +195,7 @@ func (h *PortalHandler) PortalMyTrips(c echo.Context) error {
 			"is_active":      t.IsActive,
 			"payment_status": paymentStatus,
 		}
-		isHistory := t.BatchDepartureDate != nil && t.BatchDepartureDate.Before(now)
-		if isHistory {
+		if t.BatchDepartureDate != nil && t.BatchDepartureDate.Before(now) {
 			card["completion_status"] = tripCompletionStatus(paymentStatus)
 			history = append(history, card)
 		} else {
@@ -294,6 +293,12 @@ func (h *PortalHandler) PortalTripItinerary(c echo.Context) error {
 	if err != nil {
 		return notFound(c, "perjalanan tidak ditemukan")
 	}
+	// The archive must not become the way around the gate: asking for one's own
+	// current tour by id reaches the very itinerary PortalItinerary withholds.
+	// A trip already taken is a different matter — see portalContentLocked.
+	if portalContentLocked(p) {
+		return paymentRequired(c)
+	}
 	return h.itineraryOf(c, p)
 }
 
@@ -328,14 +333,61 @@ func (h *PortalHandler) PortalConsultationPrefill(c echo.Context) error {
 	}))
 }
 
+// portalInvoiceView is one bill as the person who owes it sees it: the invoice,
+// what has actually been credited to it, and the receipts behind that.
+//
+// The invoice row alone answers neither question a participant mid-payment
+// asks — what became of the transfer I sent, and how much is left — so the page
+// showed the full amount to someone who had already paid part of it, with their
+// receipt nowhere in sight.
+type portalInvoiceView struct {
+	invoice.Invoice
+	Paid      float64           `json:"paid_amount"`
+	Remaining float64           `json:"remaining_balance"`
+	Proofs    []portalProofView `json:"proofs"`
+}
+
+// portalProofView is a receipt as its uploader sees it: what it claimed, what
+// the reviewer decided, and why. The stored path stays out — a participant opens
+// their own file through the signed-URL endpoint, by id (§19.2).
+type portalProofView struct {
+	ID            string     `json:"id"`
+	AmountClaimed float64    `json:"amount_claimed"`
+	Status        string     `json:"status"`
+	ReviewNotes   string     `json:"review_notes"`
+	UploadedAt    time.Time  `json:"uploaded_at"`
+	ReviewedAt    *time.Time `json:"reviewed_at,omitempty"`
+}
+
 // PortalInvoices returns invoices for the logged-in participant.
 func (h *PortalHandler) PortalInvoices(c echo.Context) error {
-	pid := portalParticipantID(c)
-	invs, err := h.invoices.GetInvoicesByParticipant(c.Request().Context(), pid)
+	ctx := c.Request().Context()
+	invs, err := h.invoices.GetInvoicesByParticipant(ctx, portalParticipantID(c))
 	if err != nil {
 		return serverErr(c, err)
 	}
-	return c.JSON(http.StatusOK, ok(invs))
+
+	views := make([]portalInvoiceView, 0, len(invs))
+	for i := range invs {
+		progress, err := h.invoices.ProgressOf(ctx, &invs[i])
+		if err != nil {
+			return serverErr(c, err)
+		}
+		view := portalInvoiceView{
+			Invoice:   invs[i],
+			Paid:      progress.Paid,
+			Remaining: progress.Remaining,
+			Proofs:    make([]portalProofView, 0, len(progress.Proofs)),
+		}
+		for _, p := range progress.Proofs {
+			view.Proofs = append(view.Proofs, portalProofView{
+				ID: p.ID, AmountClaimed: p.AmountClaimed, Status: p.Status,
+				ReviewNotes: p.ReviewNotes, UploadedAt: p.UploadedAt, ReviewedAt: p.ReviewedAt,
+			})
+		}
+		views = append(views, view)
+	}
+	return c.JSON(http.StatusOK, ok(views))
 }
 
 // PortalInvoicePDF returns the PDF bytes for a specific invoice.
@@ -491,6 +543,9 @@ func (h *PortalHandler) PortalItinerary(c echo.Context) error {
 	if err != nil {
 		return notFound(c, "peserta tidak ditemukan")
 	}
+	if portalContentLocked(p) {
+		return paymentRequired(c)
+	}
 	return h.itineraryOf(c, p)
 }
 
@@ -526,6 +581,11 @@ func (h *PortalHandler) PortalBatchLeader(c echo.Context) error {
 	if err != nil {
 		return notFound(c, "peserta tidak ditemukan")
 	}
+	// A tour leader's number is not owed to someone whose departure is not yet
+	// certain (story 21).
+	if portalContentLocked(p) {
+		return paymentRequired(c)
+	}
 	batch, err := h.packages.GetBatch(c.Request().Context(), p.BatchID)
 	if err != nil {
 		return c.JSON(http.StatusOK, ok(nil))
@@ -549,6 +609,13 @@ func (h *PortalHandler) PortalBriefingPDF(c echo.Context) error {
 	p, err := h.participants.GetParticipant(c.Request().Context(), pid)
 	if err != nil {
 		return notFound(c, "peserta tidak ditemukan")
+	}
+	// Two gates, stacked rather than merged: payment first, because it is the
+	// broader condition, then the H-14 window §5.8 already applied. A paid
+	// participant who is simply too early still gets NOT_YET, and the reason they
+	// are given is the one that is actually holding them up.
+	if portalContentLocked(p) {
+		return paymentRequired(c)
 	}
 	if !isBriefingActive(p) {
 		return c.JSON(http.StatusForbidden, errResponse("NOT_YET", "Briefing belum aktif (tersedia H-14 sebelum keberangkatan)"))
@@ -812,6 +879,38 @@ func PortalJWTMiddleware(secret string) echo.MiddlewareFunc {
 			return next(c)
 		}
 	}
+}
+
+// ─── The payment gate (spec: portal-pra-lunas) ───────────────────────────────
+
+// portalContentLocked reports whether one tour's travel content — its itinerary,
+// its briefing, its tour leader's number — is still behind the payment gate.
+//
+// is_active keeps the meaning it always had, "payment confirmed". What changed
+// is who reads it. It used to be the door: PortalLogin refused anyone whose
+// invoice was unsettled, which closed the chain the portal exists to open, since
+// the pay-online button is inside the portal. Now it is the contents, which is
+// where "this is not yours yet" is actually true — and what a participant needs
+// in order to pay (invoice, PDF, proof upload, documents) is not behind it.
+//
+// The rule is the payment and nothing else, which is what makes it safe to apply
+// to the my-trips archive as well as to the current tour. An earlier draft let a
+// departure that had already passed through unconditionally, on the reasoning
+// that a finished journey has nothing left to withhold — but the spec opens the
+// archive to "riwayat perjalanan lampau, yang memang sudah dibayar", and that
+// escape hatch handed the itinerary, the briefing, and the tour leader's number
+// to someone who never paid, the moment their departure date went by.
+func portalContentLocked(p *participant.Participant) bool {
+	return p != nil && !p.IsActive
+}
+
+// paymentRequired is the refusal a locked endpoint gives. It follows the shape
+// the briefing's H-14 gate already uses — 403 with a code and a sentence — so a
+// participant can tell "not yet" from "broken" without asking anyone.
+func paymentRequired(c echo.Context) error {
+	return c.JSON(http.StatusForbidden, errResponse("PAYMENT_REQUIRED",
+		"Terbuka setelah pembayaran dikonfirmasi. "+
+			"Anda tetap dapat membayar, mengunggah bukti transfer, dan melengkapi dokumen."))
 }
 
 // briefingWindowDays is how close to departure the briefing materials open

@@ -187,17 +187,29 @@ func (s *FonnteService) SendLeadsNotifSales(ctx context.Context, consultantPhone
 }
 
 func (s *FonnteService) SendInvoice(ctx context.Context, phone, name, invoiceNumber, amount, dueDate, pdfLink, invoiceID string) error {
-	msg := fmt.Sprintf(
+	refType := "invoice"
+	return s.Send(ctx, phone, name, notification.TypeInvoiceSent,
+		invoiceMessage(name, invoiceNumber, amount, dueDate, pdfLink), &invoiceID, &refType)
+}
+
+// invoiceMessage renders the invoice notification.
+//
+// pdfLink is somewhere the reader can go now — the stored PDF if there is one,
+// otherwise their own invoice page in the portal. The portal opens the moment a
+// participant exists, so an invoice that arrives before payment no longer has to
+// defer its own attachment; the sentence that did ("tersedia di portal setelah
+// pembayaran dikonfirmasi") described the portal as it used to be.
+func invoiceMessage(name, invoiceNumber, amount, dueDate, pdfLink string) string {
+	return fmt.Sprintf(
 		"🧾 *Invoice Pintour*\n\n"+
 			"Halo *%s*, invoice Anda telah diterbitkan.\n\n"+
 			"No. Invoice: *%s*\n"+
 			"Total: *Rp %s*\n"+
 			"Jatuh Tempo: *%s*\n\n"+
 			"📄 Unduh Invoice: %s\n\n"+
-			"Harap lakukan pembayaran sebelum jatuh tempo.",
+			"Anda dapat membayar online atau mengunggah bukti transfer langsung "+
+			"di portal, sebelum jatuh tempo.",
 		name, invoiceNumber, amount, dueDate, pdfLink)
-	refType := "invoice"
-	return s.Send(ctx, phone, name, notification.TypeInvoiceSent, msg, &invoiceID, &refType)
 }
 
 // SendPaymentReminder chases one unpaid invoice. days is the invoice's age, and
@@ -277,30 +289,53 @@ func (s *FonnteService) SendPortalCredentials(ctx context.Context, phone, name, 
 // successfully and still logs as delivered, and the participant it was for can
 // never get in. Rendering it separately is what lets that be asserted without a
 // gateway to send through.
+//
+// What it invites the reader to do has to match what the portal will let them
+// do when they arrive. It used to say "gunakan portal untuk mengunggah dokumen"
+// while the portal was still shut to anyone who had not paid — on the test data
+// it landed seventeen minutes before the door opened, and a participant who took
+// it at its word was refused and concluded the password was wrong.
 func portalCredentialsMessage(name, phone, password, portalLink string) string {
 	return fmt.Sprintf(
 		"🔐 *Akun Portal Pintour Anda*\n\n"+
-			"Halo *%s*, akun portal peserta Anda sudah dibuat.\n\n"+
+			"Halo *%s*, akun portal peserta Anda sudah aktif dan bisa dipakai sekarang.\n\n"+
 			"🔗 Portal: %s\n"+
 			"Username: *%s* (nomor WA ini)\n"+
 			"Password sementara: *%s*\n\n"+
-			"Simpan pesan ini baik-baik dan jangan bagikan ke siapa pun. "+
-			"Gunakan portal untuk mengunggah dokumen dan memantau status keberangkatan Anda.",
+			"Yang bisa Anda lakukan sekarang:\n"+
+			"• Melihat dan mengunduh invoice\n"+
+			"• Membayar online lewat portal\n"+
+			"• Mengunggah bukti transfer bank\n"+
+			"• Mengunggah paspor dan dokumen perjalanan lainnya\n\n"+
+			"Itinerary, briefing, dan kontak tour leader terbuka setelah pembayaran "+
+			"dikonfirmasi.\n\n"+
+			"Simpan pesan ini baik-baik dan jangan bagikan ke siapa pun.",
 		name, portalLink, phone, password)
 }
 
-// SendPortalActivated notifies a participant that their portal is active after
-// payment confirmation (PORTAL_ACTIVATED).
-func (s *FonnteService) SendPortalActivated(ctx context.Context, phone, name, email, portalLink, participantID string) error {
-	msg := fmt.Sprintf(
-		"🎉 *Portal Peserta Aktif!*\n\n"+
-			"Halo *%s*! Pembayaran Anda telah dikonfirmasi dan portal peserta Anda kini aktif.\n\n"+
-			"🔗 Akses portal: %s\n"+
-			"Username: *%s* (nomor WA Anda)\n\n"+
-			"Gunakan portal untuk upload dokumen perjalanan dan memantau status keberangkatan Anda.",
-		name, portalLink, email)
+// SendPortalActivated notifies a participant that payment was confirmed and the
+// travel content is now open (PORTAL_ACTIVATED).
+func (s *FonnteService) SendPortalActivated(ctx context.Context, phone, name, username, portalLink, participantID string) error {
 	refType := "participant"
-	return s.Send(ctx, phone, name, notification.TypePortalActivated, msg, &participantID, &refType)
+	return s.Send(ctx, phone, name, notification.TypePortalActivated,
+		portalActivatedMessage(name, username, portalLink), &participantID, &refType)
+}
+
+// portalActivatedMessage renders the payment-confirmed message.
+//
+// The portal itself was already open — the participant has been logging in to it
+// to pay — so what confirmation adds is the travel content, not the access.
+// Announcing "portal peserta Anda kini aktif" would leave the reader wondering
+// what they had been using for the past three weeks.
+func portalActivatedMessage(name, username, portalLink string) string {
+	return fmt.Sprintf(
+		"🎉 *Pembayaran Dikonfirmasi!*\n\n"+
+			"Halo *%s*! Pembayaran Anda sudah kami konfirmasi.\n\n"+
+			"🔗 Portal: %s\n"+
+			"Username: *%s* (nomor WA Anda)\n\n"+
+			"Yang kini terbuka di portal: itinerary perjalanan, briefing, dan kontak "+
+			"tour leader. Dokumen perjalanan bisa terus Anda lengkapi seperti biasa.",
+		name, portalLink, username)
 }
 
 // SendPaymentReceived confirms a (partial or full) payment was received (PAYMENT_RECEIVED).

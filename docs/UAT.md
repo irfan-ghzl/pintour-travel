@@ -129,13 +129,16 @@ menyembunyikan menu.
 |---|---------|------------------------|
 | 1 | Buat invoice untuk peserta tadi | Invoice terbit dengan nomor, rincian, dan total |
 | 2 | Unduh PDF invoice | Berkas terunduh dan terbaca, memuat identitas peserta dan rincian biaya |
-| 3 | Sebagai admin, unggah bukti transfer atas nama peserta | Bukti terkirim, status menunggu peninjauan |
-| 4 | Tinjau bukti → **setujui** | Status bukti berubah disetujui |
-| 5 | Konfirmasi pembayaran | Invoice menjadi lunas **dan portal peserta aktif** |
+| 3 | Sebagai **peserta**, login portal dan unggah bukti transfer sendiri | Bukti terkirim, dan statusnya terbaca *menunggu* di halaman invoice portal |
+| 4 | Sebagai admin, tinjau bukti → **setujui** | Status bukti berubah disetujui; peserta melihat perubahannya di portal |
+| 5 | Konfirmasi pembayaran | Invoice menjadi lunas **dan isi perjalanan terbuka bagi peserta** |
 
-Langkah 3 sengaja dilakukan admin, bukan peserta. Portal baru terbuka setelah
-pembayaran dikonfirmasi — sebelum itu peserta tidak bisa masuk sama sekali, jadi
-bukti transfer masuk lewat konsultan (WhatsApp) dan diunggahkan oleh admin.
+Langkah 3 kini dilakukan peserta sendiri. Portal terbuka sejak peserta dibuat —
+yang terkunci sampai pembayaran dikonfirmasi hanyalah itinerary, briefing, dan
+kontak tour leader — sehingga bukti transfer tidak perlu lagi lewat WhatsApp
+konsultan. Admin tetap bisa mengunggahkan atas nama peserta (`POST
+/admin/invoices/{id}/proofs`) untuk yang mengirimkannya lewat jalur lain; yang
+hilang adalah keharusannya.
 
 > **Batasan yang diketahui — hanya pada jalur manual.** Sisa tagihan sebenarnya
 > ada: ia diturunkan dari jumlah bukti transfer berstatus *disetujui*, bukan dari
@@ -158,10 +161,15 @@ bukti transfer masuk lewat konsultan (WhatsApp) dan diunggahkan oleh admin.
 
 | # | Langkah | Hasil yang diharapkan |
 |---|---------|------------------------|
-| 1 | Di portal, buka invoice → **Bayar online** | Halaman pembayaran Midtrans terbuka |
+| 1 | Di portal — **peserta yang belum pernah membayar** — buka invoice → **Bayar online** | Halaman pembayaran Midtrans terbuka |
 | 2 | Selesaikan pembayaran memakai kanal simulasi sandbox | Midtrans menyatakan transaksi berhasil |
-| 3 | Kembali ke portal, muat ulang | Status invoice berubah lunas **tanpa** admin mengonfirmasi manual |
+| 3 | Kembali ke portal, muat ulang | Status invoice berubah lunas **tanpa** admin mengonfirmasi manual, dan Itinerary serta Briefing ikut terbuka |
 | 4 | Kirim ulang notifikasi yang sama dari dasbor Midtrans | Status tidak berubah dua kali dan tidak ada pembayaran ganda tercatat |
+
+Langkah 1 menuntut peserta yang belum pernah membayar, dan itu memang inti
+skenario ini: sebelumnya portal hanya terbuka bagi peserta yang invoice-nya sudah
+lunas, sehingga gerbang pembayaran hanya bisa diuji pada satu-satunya keadaan
+ketika ia tidak dibutuhkan.
 
 Langkah 4 menguji kunci idempotensi: satu notifikasi yang datang dua kali harus
 diperlakukan sebagai satu kejadian.
@@ -174,13 +182,21 @@ diperlakukan sebagai satu kejadian.
 
 | # | Langkah | Hasil yang diharapkan |
 |---|---------|------------------------|
-| 1 | Login memakai kredensial portal peserta | Masuk ke beranda portal |
-| 2 | Buka **Perjalanan Saya** | Seluruh perjalanan milik akun ini tampil, termasuk yang sudah lampau |
-| 3 | Buka perjalanan lampau | Invoice dan itinerary lama masih bisa diunduh |
-| 4 | Ubah data profil | Perubahan tersimpan dan tampil setelah dimuat ulang |
+| 1 | Login memakai kredensial portal peserta, **sebelum membayar apa pun** | Masuk ke beranda portal |
+| 2 | Lihat menu samping | Itinerary dan Briefing tampil **terkunci** beserta alasannya, bukan hilang |
+| 3 | Buka `/portal/itinerary` langsung lewat URL | Halaman menjelaskan bahwa isinya terbuka setelah pembayaran dikonfirmasi |
+| 4 | Buka **Perjalanan Saya** | Seluruh perjalanan milik akun ini tampil, termasuk yang sudah lampau |
+| 5 | Buka perjalanan lampau | Invoice dan itinerary lama masih bisa diunduh, meski tagihan baru belum lunas |
+| 6 | Ubah data profil | Perubahan tersimpan dan tampil setelah dimuat ulang |
+| 7 | Setelah pembayaran dikonfirmasi (UAT-05/06), muat ulang portal | Itinerary dan Briefing terbuka **tanpa login ulang** |
 
-Langkah 2 membuktikan satu akun melayani banyak perjalanan — pelanggan yang
-kembali tidak perlu akun baru.
+Langkah 1 adalah yang membedakan portal ini dari versi sebelumnya: pintunya
+terbuka sejak peserta dibuat, dan yang dijaga adalah isinya. Langkah 4
+membuktikan satu akun melayani banyak perjalanan — pelanggan yang kembali tidak
+perlu akun baru.
+
+Penguncian di antarmuka adalah kenyamanan, bukan kontrol akses; yang menegakkan
+aturan adalah API, dan itu diuji otomatis (`portal_payment_gate_test.go`).
 
 ---
 
