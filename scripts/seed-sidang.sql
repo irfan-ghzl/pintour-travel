@@ -1,10 +1,17 @@
 -- Data tambahan untuk demo sidang. Aditif: tidak menghapus apa pun.
--- Penanda: seluruh nomor WA memakai awalan 62888, sehingga mudah dipisahkan
--- dari data UAT yang sudah ada.
+--
+-- Nomor WA memakai awalan 62999, yang tidak dialokasikan ke operator Indonesia
+-- mana pun. Ini bukan sekadar penanda supaya mudah dipisahkan — konversi lead
+-- mengirim kredensial portal dan tagihan lewat WhatsApp sungguhan, jadi nomor
+-- karangan yang kebetulan aktif akan menerimanya.
+--
+-- Versi pertama skrip ini memakai 62888 dan itu benar terjadi: pemilik salah
+-- satu nomor membalas "Ini bukan nomor Maya Kusuma". JANGAN mengarang nomor di
+-- blok operator (0812/0838/0857/62888/dst) untuk data uji.
 --
 -- Hapus ulang bila perlu:
---   DELETE FROM participants WHERE phone LIKE '62888%';
---   DELETE FROM leads        WHERE phone LIKE '62888%';
+--   DELETE FROM participants WHERE phone LIKE '62999%';
+--   DELETE FROM leads        WHERE phone LIKE '62999%';
 
 BEGIN;
 
@@ -54,28 +61,28 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO leads (id, name, phone, email, package_id, batch_id, pax, message,
     source, status, assigned_to, consent_given)
 VALUES
- ('cccc1111-0000-4000-8000-000000000001','Dewi Anggraini','628881000001','dewi.uji@contoh.test',
+ ('cccc1111-0000-4000-8000-000000000001','Dewi Anggraini','629991000001','dewi.uji@contoh.test',
   'aaaa1111-0000-4000-8000-000000000001','bbbb1111-0000-4000-8000-000000000001',2,
   'Ingin tahu harga untuk berdua.','meta_ads','baru',NULL,true),
- ('cccc1111-0000-4000-8000-000000000002','Rangga Pratama','628881000002','rangga.uji@contoh.test',
+ ('cccc1111-0000-4000-8000-000000000002','Rangga Pratama','629991000002','rangga.uji@contoh.test',
   'aaaa1111-0000-4000-8000-000000000002','bbbb1111-0000-4000-8000-000000000003',1,
   'Apakah masih ada kuota sakura?','organic','dihubungi','e3be60ec-011b-4009-b379-bde24cec1744',true),
- ('cccc1111-0000-4000-8000-000000000003','Siti Nurhaliza','628881000003','siti.uji@contoh.test',
+ ('cccc1111-0000-4000-8000-000000000003','Siti Nurhaliza','629991000003','siti.uji@contoh.test',
   'aaaa1111-0000-4000-8000-000000000003','bbbb1111-0000-4000-8000-000000000005',4,
   'Rombongan keluarga 4 orang.','referral','konsultasi','e3be60ec-011b-4009-b379-bde24cec1744',true),
- ('cccc1111-0000-4000-8000-000000000004','Bagus Setiawan','628881000004','bagus.uji@contoh.test',
+ ('cccc1111-0000-4000-8000-000000000004','Bagus Setiawan','629991000004','bagus.uji@contoh.test',
   'aaaa1111-0000-4000-8000-000000000001','bbbb1111-0000-4000-8000-000000000001',2,
   'Sudah sepakat, siap proses.','meta_ads','deal','6c204bfe-16b0-493a-8c85-38364656170b',true),
- ('cccc1111-0000-4000-8000-000000000005','Maya Kusuma','628881000005','maya.uji@contoh.test',
+ ('cccc1111-0000-4000-8000-000000000005','Maya Kusuma','629991000005','maya.uji@contoh.test',
   'aaaa1111-0000-4000-8000-000000000002','bbbb1111-0000-4000-8000-000000000003',2,
   'Deal untuk dua orang.','organic','deal','6c204bfe-16b0-493a-8c85-38364656170b',true),
- ('cccc1111-0000-4000-8000-000000000006','Hendra Wijaya','628881000006','hendra.uji@contoh.test',
+ ('cccc1111-0000-4000-8000-000000000006','Hendra Wijaya','629991000006','hendra.uji@contoh.test',
   'aaaa1111-0000-4000-8000-000000000003','bbbb1111-0000-4000-8000-000000000005',1,
   'Budget belum cocok.','walk_in','tidak_deal','e3be60ec-011b-4009-b379-bde24cec1744',true),
- ('cccc1111-0000-4000-8000-000000000007','Lestari Ayu','628881000007','lestari.uji@contoh.test',
+ ('cccc1111-0000-4000-8000-000000000007','Lestari Ayu','629991000007','lestari.uji@contoh.test',
   'aaaa1111-0000-4000-8000-000000000002','bbbb1111-0000-4000-8000-000000000003',3,
   'Minta itinerary lengkap.','meta_ads','baru',NULL,true),
- ('cccc1111-0000-4000-8000-000000000008','Yoga Permana','628881000008','yoga.uji@contoh.test',
+ ('cccc1111-0000-4000-8000-000000000008','Yoga Permana','629991000008','yoga.uji@contoh.test',
   'aaaa1111-0000-4000-8000-000000000001','bbbb1111-0000-4000-8000-000000000002',1,
   'Tanya jadwal keberangkatan berikutnya.','organic','deal','1abc8451-3552-4af2-b615-3e9f7084b86b',true)
 ON CONFLICT (id) DO NOTHING;
