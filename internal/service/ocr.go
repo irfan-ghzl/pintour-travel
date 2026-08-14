@@ -214,8 +214,9 @@ func (s *OCRService) recognizeText(ctx context.Context, img []byte) (string, err
 func (s *OCRService) tesseractLocalText(ctx context.Context, img []byte) (string, error) {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
-	// Recognize Indonesian + Latin (passport MRZ) text.
-	_ = w.WriteField("options", `{"languages":["ind","eng"]}`)
+	// hertzg/tesseract-server ships deu/eng/fra/kat/pol/rus/spa — no ind. Asking
+	// for a language the image lacks fails the whole scan, it does not fall back.
+	_ = w.WriteField("options", `{"languages":["eng"]}`)
 	part, err := w.CreateFormFile("file", "document.jpg")
 	if err != nil {
 		return "", err
