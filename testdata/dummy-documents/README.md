@@ -23,3 +23,24 @@ tertukar dengan berkas identitas sungguhan.
 
 Ukurannya jauh di bawah batas 5MB dan formatnya PDF, jadi keduanya lolos
 validasi dan yang teruji adalah alur unggahnya, bukan penolakan berkasnya.
+
+## Memakainya lewat fallback URL
+
+Saat object storage tidak tersedia, endpoint unggah menjawab 503 dan formulir
+beralih meminta URL berkas. Karena repo ini publik, kelima berkas di atas sudah
+punya URL yang bisa langsung ditempelkan ke kolom itu:
+
+```
+https://raw.githubusercontent.com/irfan-ghzl/pintour-travel/deploy-hardening/testdata/dummy-documents/passport.pdf
+https://raw.githubusercontent.com/irfan-ghzl/pintour-travel/deploy-hardening/testdata/dummy-documents/ktp.pdf
+https://raw.githubusercontent.com/irfan-ghzl/pintour-travel/deploy-hardening/testdata/dummy-documents/rekening_koran.pdf
+https://raw.githubusercontent.com/irfan-ghzl/pintour-travel/deploy-hardening/testdata/dummy-documents/visa_support.pdf
+https://raw.githubusercontent.com/irfan-ghzl/pintour-travel/deploy-hardening/testdata/dummy-documents/lainnya.pdf
+```
+
+Berkas yang dicatat sebagai URL absolut dilayani apa adanya oleh
+`GET /admin/signed-url` — tidak ada objek bucket di baliknya untuk
+ditandatangani — sehingga admin tetap bisa membukanya saat mereview.
+
+URL-nya menunjuk cabang `deploy-hardening`. Setelah cabang itu digabung atau
+dihapus, ganti bagian tersebut ke cabang yang memuat berkas ini.
