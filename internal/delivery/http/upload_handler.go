@@ -57,7 +57,7 @@ func (h *UploadHandler) UploadDocument(c echo.Context) error {
 	}
 	res, err := h.storage.Upload(c.Request().Context(), bucketParticipantDocuments, pid, fh)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, errResponse("UPLOAD_FAILED", err.Error()))
+		return uploadErr(c, err)
 	}
 	return c.JSON(http.StatusCreated, ok(map[string]string{
 		"path":      res.Path,
@@ -114,6 +114,24 @@ func (h *UploadHandler) SignedURLForStaff(c echo.Context) error {
 	return h.signPrivateFile(c, file)
 }
 
+// uploadErr answers a failed upload.
+//
+// A storage backend that cannot be reached is not the uploader's mistake, so it
+// does not get 400: it answers 503, which is both truthful and the status the
+// browser fallback watches for to offer a manual URL. The underlying error goes
+// to the log rather than to the response — it carries the bucket host and the
+// full object path, which is our infrastructure, not the participant's business.
+// It used to travel the other way: printed in the upload dialog, recorded
+// nowhere.
+func uploadErr(c echo.Context, err error) error {
+	if errors.Is(err, service.ErrStorageUnreachable) {
+		c.Logger().Error(err)
+		return c.JSON(http.StatusServiceUnavailable,
+			errResponse("STORAGE_UNAVAILABLE", "Storage tidak terkonfigurasi (gunakan URL manual sementara)"))
+	}
+	return c.JSON(http.StatusBadRequest, errResponse("UPLOAD_FAILED", err.Error()))
+}
+
 // resolveRequestedFile reads the resource the caller named and resolves where it
 // is stored. What comes back is what the access check runs on; the request
 // itself contributes nothing but the identifier.
@@ -145,6 +163,14 @@ func (h *UploadHandler) signPrivateFile(c echo.Context, file privateFile) error 
 	}
 	url, err := h.storage.SignedURL(c.Request().Context(), file.Bucket, file.Path, signedURLTTL)
 	if err != nil {
+		// The bucket being unreachable is an upstream outage, not a fault in this
+		// server: 503 says so, and says it without the 500's implication that the
+		// request itself broke something.
+		if errors.Is(err, service.ErrStorageUnreachable) {
+			c.Logger().Error(err)
+			return c.JSON(http.StatusServiceUnavailable,
+				errResponse("STORAGE_UNAVAILABLE", "Storage sedang tidak dapat diakses"))
+		}
 		return serverErr(c, err)
 	}
 	return c.JSON(http.StatusOK, ok(map[string]string{"url": url}))
@@ -185,7 +211,7 @@ func (h *UploadHandler) UploadPackageImage(c echo.Context) error {
 	}
 	res, err := h.storage.Upload(c.Request().Context(), "package-images", packageID, fh)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, errResponse("UPLOAD_FAILED", err.Error()))
+		return uploadErr(c, err)
 	}
 	return c.JSON(http.StatusCreated, ok(map[string]string{
 		"path":       res.Path,
@@ -213,7 +239,7 @@ func (h *UploadHandler) UploadPaymentProof(c echo.Context) error {
 	}
 	res, err := h.storage.Upload(c.Request().Context(), bucketPaymentProofs, pid, fh)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, errResponse("UPLOAD_FAILED", err.Error()))
+		return uploadErr(c, err)
 	}
 	return c.JSON(http.StatusCreated, ok(map[string]string{"path": res.Path}))
 }
