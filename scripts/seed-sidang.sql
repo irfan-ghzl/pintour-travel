@@ -13,6 +13,14 @@
 --   DELETE FROM participants WHERE phone LIKE '62999%';
 --   DELETE FROM leads        WHERE phone LIKE '62999%';
 
+-- Konsultan dirujuk lewat email, bukan UUID. leads.assigned_to punya foreign
+-- key ke users(id), sementara cmd/seed-demo membuat user dengan
+-- gen_random_uuid() — jadi UUID yang ditulis keras di sini hanya cocok pada
+-- database tempat skrip ini pertama kali ditulis, dan menolak seluruh
+-- transaksi di database baru mana pun. Subquery yang tidak menemukan siapa pun
+-- menghasilkan NULL, dan kolom itu memang boleh NULL: lead-nya tetap masuk,
+-- hanya tanpa penanggung jawab.
+
 BEGIN;
 
 -- ── Paket baru ───────────────────────────────────────────────────────────────
@@ -66,25 +74,25 @@ VALUES
   'Ingin tahu harga untuk berdua.','meta_ads','baru',NULL,true),
  ('cccc1111-0000-4000-8000-000000000002','Rangga Pratama','629991000002','rangga.uji@contoh.test',
   'aaaa1111-0000-4000-8000-000000000002','bbbb1111-0000-4000-8000-000000000003',1,
-  'Apakah masih ada kuota sakura?','organic','dihubungi','e3be60ec-011b-4009-b379-bde24cec1744',true),
+  'Apakah masih ada kuota sakura?','organic','dihubungi',(SELECT id FROM users WHERE email='rina@pintour.com'),true),
  ('cccc1111-0000-4000-8000-000000000003','Siti Nurhaliza','629991000003','siti.uji@contoh.test',
   'aaaa1111-0000-4000-8000-000000000003','bbbb1111-0000-4000-8000-000000000005',4,
-  'Rombongan keluarga 4 orang.','referral','konsultasi','e3be60ec-011b-4009-b379-bde24cec1744',true),
+  'Rombongan keluarga 4 orang.','referral','konsultasi',(SELECT id FROM users WHERE email='rina@pintour.com'),true),
  ('cccc1111-0000-4000-8000-000000000004','Bagus Setiawan','629991000004','bagus.uji@contoh.test',
   'aaaa1111-0000-4000-8000-000000000001','bbbb1111-0000-4000-8000-000000000001',2,
-  'Sudah sepakat, siap proses.','meta_ads','deal','6c204bfe-16b0-493a-8c85-38364656170b',true),
+  'Sudah sepakat, siap proses.','meta_ads','deal',(SELECT id FROM users WHERE email='budi@pintour.com'),true),
  ('cccc1111-0000-4000-8000-000000000005','Maya Kusuma','629991000005','maya.uji@contoh.test',
   'aaaa1111-0000-4000-8000-000000000002','bbbb1111-0000-4000-8000-000000000003',2,
-  'Deal untuk dua orang.','organic','deal','6c204bfe-16b0-493a-8c85-38364656170b',true),
+  'Deal untuk dua orang.','organic','deal',(SELECT id FROM users WHERE email='budi@pintour.com'),true),
  ('cccc1111-0000-4000-8000-000000000006','Hendra Wijaya','629991000006','hendra.uji@contoh.test',
   'aaaa1111-0000-4000-8000-000000000003','bbbb1111-0000-4000-8000-000000000005',1,
-  'Budget belum cocok.','walk_in','tidak_deal','e3be60ec-011b-4009-b379-bde24cec1744',true),
+  'Budget belum cocok.','walk_in','tidak_deal',(SELECT id FROM users WHERE email='rina@pintour.com'),true),
  ('cccc1111-0000-4000-8000-000000000007','Lestari Ayu','629991000007','lestari.uji@contoh.test',
   'aaaa1111-0000-4000-8000-000000000002','bbbb1111-0000-4000-8000-000000000003',3,
   'Minta itinerary lengkap.','meta_ads','baru',NULL,true),
  ('cccc1111-0000-4000-8000-000000000008','Yoga Permana','629991000008','yoga.uji@contoh.test',
   'aaaa1111-0000-4000-8000-000000000001','bbbb1111-0000-4000-8000-000000000002',1,
-  'Tanya jadwal keberangkatan berikutnya.','organic','deal','1abc8451-3552-4af2-b615-3e9f7084b86b',true)
+  'Tanya jadwal keberangkatan berikutnya.','organic','deal',(SELECT id FROM users WHERE email='operator@pintour.com'),true)
 ON CONFLICT (id) DO NOTHING;
 
 COMMIT;
