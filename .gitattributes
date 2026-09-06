@@ -1,0 +1,7 @@
+# Skrip ini dieksekusi di Linux, bukan di laptop yang meng-commit. Dengan
+# core.autocrlf=true di Windows, akhir baris CRLF bisa ikut tersimpan dan
+# skripnya gagal di server dengan pesan yang tidak menunjuk ke sebabnya —
+# "bad interpreter: No such file or directory" untuk berkas yang jelas ada,
+# atau "syntax error near unexpected token" di baris yang benar. Dipaksa LF
+# berapa pun setelan laptopnya.
+*.sh text eol=lf

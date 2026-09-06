@@ -30,6 +30,18 @@ if [ "$(id -u)" -ne 0 ]; then
 	exit 1
 fi
 
+# ── Prasyarat ────────────────────────────────────────────────────────────────
+# Image cloud Ubuntu tidak selalu membawa git. DigitalOcean menambahkannya di
+# image mereka; image Ubuntu bawaan dan sebagian penyedia lain tidak. Tanpa
+# pemeriksaan ini kegagalannya muncul jauh di bawah, di langkah clone, setelah
+# Docker dan swap terlanjur terpasang — dan pesannya cuma "git: command not
+# found", yang tidak menunjukkan bahwa sisanya sudah berhasil.
+if ! command -v git >/dev/null 2>&1; then
+	log "Memasang git"
+	apt-get update -qq
+	apt-get install -y -qq git
+fi
+
 # ── Docker ───────────────────────────────────────────────────────────────────
 if command -v docker >/dev/null 2>&1; then
 	log "Docker sudah ada — dilewati"
@@ -61,13 +73,24 @@ fi
 systemctl enable --now docker
 
 # ── Swap ─────────────────────────────────────────────────────────────────────
-# t3.micro punya 1 GB. Stack idle hanya ~125 MB, tapi Tesseract melonjak
-# 200–400 MB saat memproses paspor hasil pindai. Tanpa swap, lonjakan itu
-# membunuh proses yang kebetulan paling besar — biasanya Postgres.
-if swapon --show | grep -q '/swapfile'; then
-	log "Swap sudah aktif — dilewati"
+# Stack idle hanya ~125 MB, tapi Tesseract melonjak 200–400 MB saat memproses
+# paspor hasil pindai. Tanpa swap, lonjakan itu membunuh proses yang kebetulan
+# paling besar — biasanya Postgres.
+#
+# Yang diperiksa ukurannya, bukan sekadar ada atau tidaknya /swapfile. Sebagian
+# image penyedia sudah membawa swap kecil sendiri — image Ubuntu Rumahweb
+# memberi 256 MB — dan memeriksa keberadaan berkasnya saja membuat langkah ini
+# dilewati diam-diam, meninggalkan swap yang justru terlalu kecil untuk lonjakan
+# yang jadi alasan swap ini ada.
+swap_mb=$(free -m | awk '/^Swap:/{print $2}')
+if [ "${swap_mb:-0}" -ge 1900 ]; then
+	log "Swap ${swap_mb} MB sudah memadai — dilewati"
 else
-	log "Membuat swap 2 GB"
+	log "Swap sekarang ${swap_mb:-0} MB — dijadikan 2 GB"
+	if swapon --show=NAME --noheadings 2>/dev/null | grep -qx /swapfile; then
+		swapoff /swapfile
+	fi
+	rm -f /swapfile
 	fallocate -l 2G /swapfile
 	chmod 600 /swapfile
 	mkswap /swapfile
