@@ -16,7 +16,7 @@ hitungan menit setelah dibayar.
 | Komponen | Spesifikasi | Biaya |
 | --- | --- | --- |
 | VPS KVM Paket S | 1 vCPU / 1 GB RAM / 20 GB SSD / bandwidth unmetered | Rp30.000/bulan* |
-| Domain `.cloud` | 1 tahun, bawaan paket S | Rp0 |
+| Domain | **tidak termasuk di Paket S** — lihat Bagian 5 | Rp0–20rb/th |
 | Firewall | `ufw` di VPS sendiri | Rp0 |
 
 \* Harga promo saat order (diskon 50% dari Rp60.000). **Cek harga
@@ -219,8 +219,26 @@ lewat `expose`; ini lapisan kedua.
 
 ## Bagian 5 — Domain
 
-Paket S sudah termasuk **1 domain `.cloud` gratis setahun** — cukup untuk
-kebutuhan TLS di Bagian 8, tidak perlu beli domain terpisah.
+Domain `.cloud` gratis itu **hanya untuk paket M ke atas** — halaman Rumahweb
+menuliskannya sebagai "Free domain .CLOUD + Free cPanel Solo (paket M ke atas)".
+Paket S tidak mendapatkannya. Dua jalan yang tersisa:
+
+**Tanpa biaya, tanpa menunggu propagasi.** `sslip.io` menyelesaikan hostname
+menjadi IP yang tertulis di dalamnya, dan Let's Encrypt mau menerbitkan
+sertifikat untuknya — jalur yang memang sudah disebut di `Caddyfile`:
+
+```
+SITE_DOMAIN=202-10-47-94.sslip.io
+```
+
+Ganti angkanya dengan IP server, pakai tanda hubung. Tidak ada A record yang
+perlu dibuat dan tidak ada propagasi yang perlu ditunggu; langsung bisa dipakai
+di Bagian 7. Cukup untuk demo dan sidang, dan menukarnya ke domain sungguhan
+nanti hanya mengubah tiga baris di `.env` plus satu secret di GitHub.
+
+**Domain sungguhan.** `.my.id` di Rumahweb harganya belasan ribu setahun dan
+dikelola di panel yang sama. Beli lebih awal kalau memang mau dipakai —
+propagasinya yang makan waktu, bukan pemasangannya.
 
 **Clientzone** → **Domain** → **Manage Domain** → **DNS Management** → buat
 **A record** `@` menunjuk ke IP VPS dari Bagian 2.
@@ -230,7 +248,7 @@ memverifikasi dengan benar-benar menghubungi domain itu lewat port 80. Periksa
 dulu:
 
 ```bash
-nslookup pintour.cloud
+nslookup <domain-anda>
 ```
 
 Propagasi DNS bisa perlu sampai beberapa jam.
@@ -262,9 +280,9 @@ Salin kerangkanya dari `.env.example`. Yang wajib benar — API menolak start
 bila tidak:
 
 ```
-SITE_DOMAIN=pintour.cloud
-APP_URL=https://pintour.cloud
-PORTAL_BASE_URL=https://pintour.cloud
+SITE_DOMAIN=<domain-anda>
+APP_URL=https://<domain-anda>
+PORTAL_BASE_URL=https://<domain-anda>
 POSTGRES_PASSWORD=<baru>
 REDIS_PASSWORD=<baru>
 JWT_SECRET=<hasil openssl rand -hex 64>
@@ -292,7 +310,7 @@ Repo → **Settings** → **Secrets and variables** → **Actions**:
 | `DEPLOY_USER` | `root` |
 | `DEPLOY_SSH_KEY` | **isi** berkas `pintour` (yang tanpa `.pub`) |
 | `DEPLOY_PATH` | `/srv/pintour` |
-| `HEALTHCHECK_URL` | `https://pintour.cloud` |
+| `HEALTHCHECK_URL` | `https://<domain-anda>` |
 
 ```powershell
 Get-Content "$env:USERPROFILE\.ssh\pintour" | Set-Clipboard
@@ -305,7 +323,7 @@ Get-Content "$env:USERPROFILE\.ssh\pintour" | Set-Clipboard
 Merge PR ke `main`. Pantau di tab **Actions**: test → build → deploy →
 healthcheck. Deploy pertama paling lama karena belum ada cache build.
 
-Setelah hijau, buka `https://pintour.cloud`. Yang seharusnya terlihat: gembok
+Setelah hijau, buka `https://<domain-anda>`. Yang seharusnya terlihat: gembok
 TLS terpasang, katalog paket termuat, login admin berfungsi.
 
 ---
@@ -353,7 +371,7 @@ menimpa (cek file `Include` di `/etc/ssh/sshd_config.d/`).
 → VPS → **Rescue Mode** — bukan minta reset password lewat SSH yang sudah
 tertutup.
 
-**Sertifikat TLS tidak terbit.** Domain `.cloud` belum menunjuk ke IP saat
+**Sertifikat TLS tidak terbit.** Domain belum menunjuk ke IP saat
 Caddy mencoba, atau port 80 tertutup `ufw`. Let's Encrypt memverifikasi lewat
 HTTP di port 80. Periksa `dc logs caddy`.
 
