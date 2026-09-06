@@ -294,6 +294,66 @@ func TestValidate_AllowsProductionWithoutAPaymentGateway(t *testing.T) {
 	}
 }
 
+// A demonstration runs the real flow against the sandbox on purpose — a
+// defence, a walkthrough for a client — and saying so is what separates it from
+// the deployment this check exists to stop.
+func TestValidate_AllowsTheSandboxWhenTheDeploymentAsksForIt(t *testing.T) {
+	c := productionConfig()
+	c.Midtrans.ServerKey = "SB-Mid-server-xxx"
+	c.Midtrans.Env = "sandbox"
+	c.Midtrans.AllowSandbox = true
+
+	if err := c.Validate(); err != nil {
+		t.Errorf("a deployment that opted into the sandbox was refused: %v", err)
+	}
+}
+
+// The waiver is the whole reason this is opt-in rather than a looser rule, so
+// it has to stay narrow: it excuses the sandbox and nothing else.
+func TestValidate_SandboxWaiverExcusesNothingElse(t *testing.T) {
+	c := productionConfig()
+	c.Midtrans.ServerKey = "SB-Mid-server-xxx"
+	c.Midtrans.Env = "sandbox"
+	c.Midtrans.AllowSandbox = true
+	c.JWT.Secret = defaultJWTSecret
+	c.Server.PortalBaseURL = "http://localhost:3000"
+
+	err := c.Validate()
+	if err == nil {
+		t.Fatal("the sandbox waiver let an unsafe production configuration start")
+	}
+	for _, want := range []string{"JWT_SECRET", "PORTAL_BASE_URL"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to still name %s", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "MIDTRANS_ENV") {
+		t.Errorf("error = %q, want the sandbox itself to be excused", err)
+	}
+}
+
+// Not set means not waived. A deployment reaches the sandbox only by asking
+// for it in those exact words, never by a value that merely looks affirmative.
+func TestMidtransAllowSandbox_IsOffUnlessSaidExactly(t *testing.T) {
+	for _, raw := range []string{"", "false", "1", "yes", "TRUE", "True"} {
+		t.Run("MIDTRANS_ALLOW_SANDBOX="+raw, func(t *testing.T) {
+			t.Setenv("MIDTRANS_ALLOW_SANDBOX", raw)
+
+			if Load().Midtrans.AllowSandbox {
+				t.Errorf("%q waived the sandbox check; only \"true\" may", raw)
+			}
+		})
+	}
+
+	t.Run("MIDTRANS_ALLOW_SANDBOX=true", func(t *testing.T) {
+		t.Setenv("MIDTRANS_ALLOW_SANDBOX", "true")
+
+		if !Load().Midtrans.AllowSandbox {
+			t.Error(`"true" did not waive the sandbox check`)
+		}
+	})
+}
+
 // Several mistakes at once are reported together. An operator fixing a
 // misconfigured deployment should not have to restart it once per problem.
 func TestValidate_ReportsEveryProblemAtOnce(t *testing.T) {

@@ -34,6 +34,13 @@ type MidtransConfig struct {
 	ServerKey string
 	ClientKey string
 	Env       string // "sandbox" | "production"
+
+	// AllowSandbox lets a production deployment run against the payment
+	// sandbox on purpose. It exists for demonstrations — a defence, a
+	// walkthrough for a client — where the whole point is to show the payment
+	// flow without moving money. Off unless set, so no deployment reaches this
+	// state by drifting into it.
+	AllowSandbox bool
 }
 
 // ChatbotConfig — Gemini-powered WA chatbot (v2.0 F2).
@@ -124,9 +131,10 @@ func Load() *Config {
 			ServiceKey: Env("SUPABASE_SERVICE_KEY", ""),
 		},
 		Midtrans: MidtransConfig{
-			ServerKey: Env("MIDTRANS_SERVER_KEY", ""),
-			ClientKey: Env("MIDTRANS_CLIENT_KEY", ""),
-			Env:       Env("MIDTRANS_ENV", "sandbox"),
+			ServerKey:    Env("MIDTRANS_SERVER_KEY", ""),
+			ClientKey:    Env("MIDTRANS_CLIENT_KEY", ""),
+			Env:          Env("MIDTRANS_ENV", "sandbox"),
+			AllowSandbox: Env("MIDTRANS_ALLOW_SANDBOX", "") == "true",
 		},
 		Chatbot: ChatbotConfig{
 			GeminiKey:    Env("GEMINI_API_KEY", ""),
@@ -182,7 +190,13 @@ func (c *Config) Validate() error {
 	// Leaving MIDTRANS_SERVER_KEY empty is a legitimate deployment — one that
 	// does not take online payments, and says so by failing the endpoint — but
 	// a real key against the sandbox is not.
-	if c.Midtrans.ServerKey != "" && c.Midtrans.Env != EnvProduction {
+	//
+	// MIDTRANS_ALLOW_SANDBOX=true waives this, and only this. A deployment that
+	// says so has declared it is a demonstration: the sandbox is the intent,
+	// not an oversight. Everything the check protects against still holds for
+	// anyone who does not set it, which is the point of making it opt-in rather
+	// than loosening the rule for all.
+	if c.Midtrans.ServerKey != "" && c.Midtrans.Env != EnvProduction && !c.Midtrans.AllowSandbox {
 		problems = append(problems, fmt.Sprintf(
 			"MIDTRANS_ENV=%q padahal MIDTRANS_SERVER_KEY terisi — pembayaran akan diproses di sandbox "+
 				"dan dilaporkan lunas tanpa uang masuk; set MIDTRANS_ENV=production, atau kosongkan "+
