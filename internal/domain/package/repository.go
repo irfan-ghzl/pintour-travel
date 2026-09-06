@@ -21,6 +21,10 @@ type BatchRepository interface {
 	Create(ctx context.Context, b *PackageBatch) error
 	Update(ctx context.Context, b *PackageBatch) error
 	GetByID(ctx context.Context, id string) (*PackageBatch, error)
-	List(ctx context.Context, f BatchFilter) ([]PackageBatch, error)
 	ListByPackage(ctx context.Context, packageID string) ([]PackageBatch, error)
+	// ListAll answers across every package, paginated, nearest departure first,
+	// each row carrying its package name and participant count. The per-package
+	// listings above cannot serve the admin pickers: three of the four pages that
+	// need a departure have no package in hand to ask about.
+	ListAll(ctx context.Context, f BatchFilter) ([]PackageBatch, int, error)
 }

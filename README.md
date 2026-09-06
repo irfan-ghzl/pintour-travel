@@ -47,36 +47,38 @@ pintour-travel/
 
 ## Quick Start
 
-### With Docker (recommended)
+```bash
+cp .env.example .env
+```
 
 ```bash
-# Build & start all services
 make docker-up
-
-# Tail logs
-make docker-logs
-
-# Stop
-make docker-down
 ```
 
-Services:
-- **API**: http://localhost:8080
-- **Swagger UI**: http://localhost:8080/swagger/index.html
-- **Web**: http://localhost:80
+Aplikasi di <http://localhost>, API di <http://localhost:8080>, Swagger di
+<http://localhost:8080/swagger/index.html>. Login: `admin@pintour.com` /
+`admin123`. Migrasi diterapkan sendiri oleh API saat start.
 
-### Local Development
+Kalau menjalankan compose langsung, **dua berkas harus disertakan**:
 
 ```bash
-# 1. Start DB & Redis via Docker
-docker compose up db redis -d
-
-# 2. Run the Go API
-make run
-
-# 3. Start the React dev server (in another terminal)
-make web-dev  # → http://localhost:3000
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 ```
+
+Berkas dasar memaksa `APP_ENV=production` supaya pemeriksaan konfigurasi
+benar-benar berjalan di server. Tanpa overlay dev, API menolak start di laptop —
+karena `PORTAL_BASE_URL` memang localhost dan Midtrans memang sandbox, dan
+keduanya benar di sini.
+
+**[docs/RUNNING.md](docs/RUNNING.md)** memuat keempat mode selengkapnya: Docker
+penuh, hybrid untuk mengubah kode, URL publik sementara lewat Cloudflare Tunnel,
+dan produksi.
+
+### Deploy
+
+Merge ke `main` membangun image dan menyalakannya di server sendiri. Runbook dari
+nol: **[DigitalOcean lewat GitHub Student Pack](docs/deploy-digitalocean.md)**
+(gratis setahun) atau **[AWS EC2](docs/deploy-aws.md)**.
 
 ## Code Generation
 
@@ -124,4 +126,4 @@ make proto
 | `REDIS_ADDR` | `localhost:6379` | Redis address |
 | `REDIS_PASSWORD` | *(empty)* | Redis password |
 | `JWT_SECRET` | *(dev only)* | JWT signing key |
-| `JWT_EXPIRATION_HOURS` | `72` | Token TTL in hours |
+| `JWT_EXPIRATION_HOURS` | `8` | Token TTL in hours (PRD §10.3) |

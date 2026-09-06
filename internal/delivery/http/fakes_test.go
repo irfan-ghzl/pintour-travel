@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/airport"
+	"github.com/irfan-ghzl/pintour-travel/internal/domain/calendar"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/chatbot"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/document"
 	domainInvoice "github.com/irfan-ghzl/pintour-travel/internal/domain/invoice"
@@ -182,6 +183,23 @@ func (r *fakeUserRepo) Create(_ context.Context, u *domainUser.User) error {
 	}
 	u.CreatedAt = time.Now()
 	r.Seed(*u)
+	return nil
+}
+
+// UpdatePassword menulis kata sandi saja, sama seperti repository sungguhan.
+// Ditiru persis supaya test bisa membuktikan kata sandi baru benar-benar
+// menggantikan yang lama — cacatnya dulu justru berupa Update yang melaporkan
+// berhasil sementara kolomnya tidak tersentuh.
+func (r *fakeUserRepo) UpdatePassword(_ context.Context, id, hashedPassword string) error {
+	if r.err != nil {
+		return r.err
+	}
+	u, ok := r.users[id]
+	if !ok {
+		return errNotFound
+	}
+	u.Password = hashedPassword
+	u.UpdatedAt = time.Now()
 	return nil
 }
 
@@ -549,6 +567,11 @@ type fakeParticipantRepo struct {
 	fakeErr
 	participants map[string]*domainParticipant.Participant
 	order        []string
+	// leads resolves participant -> originating lead -> assigned consultant, the
+	// same chain the Postgres repository walks with a JOIN. Without it the fake
+	// silently ignores Filter.AssignedTo, and every test asserting that a
+	// konsultan sees only their own participants passes without testing anything.
+	leads *fakeLeadRepo
 }
 
 func newFakeParticipantRepo() *fakeParticipantRepo {
@@ -645,9 +668,39 @@ func (r *fakeParticipantRepo) List(_ context.Context, f domainParticipant.Filter
 		if f.IsActive != nil && p.IsActive != *f.IsActive {
 			continue
 		}
+		if f.ID != nil && p.ID != *f.ID {
+			continue
+		}
+		if f.AssignedTo != nil && !r.ownedBy(p, *f.AssignedTo) {
+			continue
+		}
+		// Mirrors "name ILIKE $1 OR phone ILIKE $1" in the Postgres repository.
+		// Ignoring Search here made every participant-picker assertion pass
+		// against a fake that returned the whole table.
+		if f.Search != nil && *f.Search != "" && !matchesNameOrPhone(p, *f.Search) {
+			continue
+		}
 		out = append(out, *p)
 	}
 	return out, len(out), nil
+}
+
+// matchesNameOrPhone reports whether a participant answers to a fragment of
+// their name or of their WhatsApp number.
+func matchesNameOrPhone(p *domainParticipant.Participant, search string) bool {
+	needle := strings.ToLower(search)
+	return strings.Contains(strings.ToLower(p.Name), needle) ||
+		strings.Contains(p.Phone, search)
+}
+
+// ownedBy mirrors the JOIN in the Postgres repository: a participant belongs to
+// the consultant its originating lead is assigned to.
+func (r *fakeParticipantRepo) ownedBy(p *domainParticipant.Participant, consultantID string) bool {
+	if r.leads == nil || p.LeadID == nil {
+		return false
+	}
+	l, ok := r.leads.leads[*p.LeadID]
+	return ok && l.AssignedTo != nil && *l.AssignedTo == consultantID
 }
 
 func (r *fakeParticipantRepo) Activate(_ context.Context, id string) error {
@@ -1185,6 +1238,11 @@ type fakeBatchRepo struct {
 	fakeErr
 	batches map[string]*domainPkg.PackageBatch
 	order   []string
+	// packages and participants stand in for the joins ListAll makes: the package
+	// name a picker shows, and the head count it shows beside the quota. Without
+	// them the fake would answer rows a real listing never produces.
+	packages     *fakePackageRepo
+	participants *fakeParticipantRepo
 }
 
 func newFakeBatchRepo() *fakeBatchRepo {
@@ -1233,26 +1291,108 @@ func (r *fakeBatchRepo) GetByID(_ context.Context, id string) (*domainPkg.Packag
 	return b, nil
 }
 
-func (r *fakeBatchRepo) List(_ context.Context, f domainPkg.BatchFilter) ([]domainPkg.PackageBatch, error) {
+// ListByPackage carries no head count, matching the Postgres repository: this
+// listing also feeds the public catalogue, which is told nothing about how many
+// seats a departure has sold.
+func (r *fakeBatchRepo) ListByPackage(ctx context.Context, packageID string) ([]domainPkg.PackageBatch, error) {
 	if r.err != nil {
 		return nil, r.err
 	}
 	out := []domainPkg.PackageBatch{}
 	for _, id := range r.order {
-		b := r.batches[id]
+		b := *r.batches[id]
+		if b.PackageID != packageID {
+			continue
+		}
+		b.ParticipantCount = nil
+		if r.packages != nil {
+			if p, err := r.packages.GetByID(ctx, b.PackageID); err == nil {
+				b.PackageName = p.Name
+			}
+		}
+		out = append(out, b)
+	}
+	return out, nil
+}
+
+// ListAll mirrors the Postgres cross-package listing: the same filters, the same
+// two-key ordering (still to come before already gone, closest to today first),
+// and the same joined package name and head count.
+func (r *fakeBatchRepo) ListAll(ctx context.Context, f domainPkg.BatchFilter) ([]domainPkg.PackageBatch, int, error) {
+	if r.err != nil {
+		return nil, 0, r.err
+	}
+	today := calendar.Today()
+
+	out := []domainPkg.PackageBatch{}
+	for _, id := range r.order {
+		b := *r.batches[id]
 		if f.PackageID != nil && b.PackageID != *f.PackageID {
 			continue
 		}
 		if f.Status != nil && b.Status != *f.Status {
 			continue
 		}
-		out = append(out, *b)
+		if f.Upcoming && b.DepartureDate.Before(today) {
+			continue
+		}
+		r.join(ctx, &b)
+		if f.Search != nil && *f.Search != "" &&
+			!strings.Contains(strings.ToLower(b.PackageName), strings.ToLower(*f.Search)) {
+			continue
+		}
+		out = append(out, b)
 	}
-	return out, nil
+
+	sort.SliceStable(out, func(i, j int) bool {
+		gone := func(b domainPkg.PackageBatch) bool { return b.DepartureDate.Before(today) }
+		if gone(out[i]) != gone(out[j]) {
+			return !gone(out[i])
+		}
+		return abs(today.DaysUntil(out[i].DepartureDate)) < abs(today.DaysUntil(out[j].DepartureDate))
+	})
+
+	total := len(out)
+	if f.Page < 1 {
+		f.Page = 1
+	}
+	if f.PerPage < 1 {
+		f.PerPage = 20
+	}
+	start := (f.Page - 1) * f.PerPage
+	if start >= total {
+		return []domainPkg.PackageBatch{}, total, nil
+	}
+	end := start + f.PerPage
+	if end > total {
+		end = total
+	}
+	return out[start:end], total, nil
 }
 
-func (r *fakeBatchRepo) ListByPackage(ctx context.Context, packageID string) ([]domainPkg.PackageBatch, error) {
-	return r.List(ctx, domainPkg.BatchFilter{PackageID: &packageID})
+// join fills the columns ListAll reads from other tables. The head count is a
+// pointer for the same reason it is in the domain: absent means "not counted",
+// which is a different answer from zero.
+func (r *fakeBatchRepo) join(ctx context.Context, b *domainPkg.PackageBatch) {
+	if r.packages != nil {
+		if p, err := r.packages.GetByID(ctx, b.PackageID); err == nil {
+			b.PackageName = p.Name
+		}
+	}
+	count := 0
+	if r.participants != nil {
+		if pts, err := r.participants.ListByBatch(ctx, b.ID); err == nil {
+			count = len(pts)
+		}
+	}
+	b.ParticipantCount = &count
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 // ─── document.Repository ──────────────────────────────────────────────────────

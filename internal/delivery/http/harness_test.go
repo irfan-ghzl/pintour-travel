@@ -216,6 +216,13 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 	// fakes holding what gets anonymised.
 	h.Deletions.participants = h.Participants
 	h.Deletions.documents = h.Documents
+	// Scoping a participant to a consultant goes through its originating lead, so
+	// the participant fake needs to see the leads to answer "whose is this".
+	h.Participants.leads = h.Leads
+	// The cross-package batch listing joins the package for its name and the
+	// participants for the head count a picker shows.
+	h.Batches.packages = h.Packages
+	h.Batches.participants = h.Participants
 	h.Unit = &fakeUnitOfWork{
 		participants: h.Participants, leads: h.Leads, portalUsers: h.PortalUsers,
 		invoices: h.Invoices, proofs: h.Proofs, gatewayOrders: h.GatewayOrders,

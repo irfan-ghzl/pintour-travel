@@ -111,6 +111,17 @@ type PackageBatch struct {
 	// Joined
 	PackageName    string  `json:"package_name,omitempty"`
 	TourLeaderName *string `json:"tour_leader_name,omitempty"`
+	// ParticipantCount is how many participants are already booked on the
+	// departure. It is counted by the listing query, not stored — §14.4 says the
+	// filled count is not a column — and it is what lets a picker say "12 of 40"
+	// instead of only naming a quota.
+	//
+	// A pointer, so "nobody has booked yet" and "this read did not count" are
+	// different answers. Only the admin cross-package listing counts: the
+	// per-package listing is what the PUBLIC catalogue is served from
+	// (GET /packages/{slug}), and how many seats a departure has sold is not
+	// something an anonymous visitor was ever told.
+	ParticipantCount *int `json:"participant_count,omitempty"`
 }
 
 // HasAvailableSeats reports whether the batch can still take a booking (§14.4).
@@ -172,8 +183,16 @@ type Filter struct {
 	PerPage        int
 }
 
-// BatchFilter holds filter params for listing batches.
+// BatchFilter holds the query parameters of the cross-package batch listing.
 type BatchFilter struct {
 	PackageID *string
 	Status    *string
+	// Upcoming keeps only departures that have not left yet, so a picker offered
+	// to an operator stays short as the history behind it grows.
+	Upcoming bool
+	// Search matches the package name — a departure is recognised by the trip it
+	// belongs to, never by its own identifier.
+	Search  *string
+	Page    int
+	PerPage int
 }

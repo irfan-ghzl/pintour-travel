@@ -11,6 +11,7 @@ package httpdelivery
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -148,6 +149,43 @@ func TestSettlement_ConfirmAfterProofDoesNotResendDocumentRequest(t *testing.T) 
 	if types := sentTypes(t, h); countType(types, notification.TypeDocRequest) != 1 {
 		t.Errorf("DOC_REQUEST terkirim %d kali setelah kedua jalur dipakai, ingin 1: %v",
 			countType(types, notification.TypeDocRequest), types)
+	}
+}
+
+// ─── What the invoice message points at (tiket 03) ────────────────────────────
+
+// The invoice a participant receives points at a page they can open the moment
+// it arrives. Which link that is gets decided by the flow rather than by the
+// template, so it is asserted here, where the flow runs.
+//
+// It used to end with "(tersedia di portal setelah pembayaran dikonfirmasi)" —
+// true of the portal as it was, and the sentence that told a participant not to
+// try logging in at exactly the point they needed to.
+func TestInvoiceCreated_WhatsAppPointsAtTheInvoicePage(t *testing.T) {
+	gateway := whatsappGateway(t)
+	h := newHarness(t, withFonnteServer(gateway.URL))
+	h.seedBaseline()
+
+	h.as("admin").POST("/api/v1/admin/invoices", map[string]any{
+		"participant_id": "participant-1", "batch_id": "batch-1",
+		"amount": 25000000, "due_date": calendar.Today().AddDays(7),
+	}).expectCode(http.StatusCreated)
+	sentTypes(t, h)
+
+	var sent *notification.WANotification
+	for i := range h.Notifications.Sent {
+		if h.Notifications.Sent[i].MessageType == notification.TypeInvoiceSent {
+			sent = &h.Notifications.Sent[i]
+		}
+	}
+	if sent == nil {
+		t.Fatalf("invoice terbit tanpa pesan WhatsApp: %v", h.Notifications.Sent)
+	}
+	if !strings.Contains(sent.MessageContent, "/portal/invoices") {
+		t.Errorf("pesan invoice tidak menunjuk halaman invoice portal:\n%s", sent.MessageContent)
+	}
+	if strings.Contains(strings.ToLower(sent.MessageContent), "setelah pembayaran") {
+		t.Errorf("pesan invoice masih menunda PDF sampai pembayaran:\n%s", sent.MessageContent)
 	}
 }
 

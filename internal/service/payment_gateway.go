@@ -92,16 +92,25 @@ func (s *MidtransService) CreateSnap(ctx context.Context, req SnapRequest) (stri
 	if req.ExpiryHours <= 0 {
 		req.ExpiryHours = 24
 	}
+	// Surel peserta bersifat opsional di formulir konsultasi, jadi sebagiannya
+	// kosong. Mengirimkan string kosong bukan sekadar tidak berguna: Midtrans
+	// menolak seluruh transaksi dengan "customer_details.email format is
+	// invalid", dan peserta hanya melihat galat 500 tanpa sebab. Kolom yang
+	// tidak diketahui lebih baik tidak dikirim daripada dikirim kosong.
+	customer := map[string]interface{}{
+		"first_name": req.Customer.Name,
+		"phone":      req.Customer.Phone,
+	}
+	if req.Customer.Email != "" {
+		customer["email"] = req.Customer.Email
+	}
+
 	payload := map[string]interface{}{
 		"transaction_details": map[string]interface{}{
 			"order_id":     req.OrderID,
 			"gross_amount": req.GrossAmount,
 		},
-		"customer_details": map[string]interface{}{
-			"first_name": req.Customer.Name,
-			"email":      req.Customer.Email,
-			"phone":      req.Customer.Phone,
-		},
+		"customer_details": customer,
 		"item_details": []map[string]interface{}{{
 			"id":       req.OrderID,
 			"price":    req.GrossAmount,

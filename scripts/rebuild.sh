@@ -37,8 +37,14 @@ err()     { echo -e "${RED}✗ $1${NC}"; }
 
 [ ! -f .env ] && { err ".env tidak ditemukan. cp .env.example .env"; exit 1; }
 
+# Semua perintah di skrip ini memakai overlay dev. Berkas dasar memaksa
+# APP_ENV=production supaya Validate() benar-benar berjalan di server;
+# menjalankannya apa adanya di laptop membuat API menolak start karena
+# PORTAL_BASE_URL memang localhost dan Midtrans memang sandbox.
+COMPOSE="docker compose -f docker-compose.yml -f docker-compose.dev.yml"
+
 section "1. Stopping containers"
-docker compose down > /dev/null 2>&1
+$COMPOSE down > /dev/null 2>&1
 ok "stopped"
 
 if $FRESH; then
@@ -54,15 +60,15 @@ if ! $SKIP_BUILD; then
   BUILD_ARGS=""
   $NO_CACHE && BUILD_ARGS="--no-cache"
   if $API_ONLY; then
-    docker compose build $BUILD_ARGS api
+    $COMPOSE build $BUILD_ARGS api
   else
-    docker compose build $BUILD_ARGS
+    $COMPOSE build $BUILD_ARGS
   fi
   ok "images rebuilt"
 fi
 
 section "4. Starting services"
-docker compose up -d
+$COMPOSE up -d
 ok "services started"
 
 section "5. Waiting for DB & API"
@@ -96,6 +102,6 @@ echo "  Web app   : http://localhost"
 echo "  API       : http://localhost:8080/api/v1"
 echo "  Swagger   : http://localhost:8080/swagger/index.html"
 echo ""
-echo "  Tail logs : docker compose logs -f"
-echo "  Stop all  : docker compose down"
+echo "  Tail logs : $COMPOSE logs -f"
+echo "  Stop all  : $COMPOSE down"
 echo ""

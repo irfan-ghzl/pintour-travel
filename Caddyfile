@@ -1,0 +1,41 @@
+# Caddy hanya punya satu tugas di sini: menerima HTTPS dari luar dan
+# meneruskannya ke nginx di service `web`. Seluruh aturan aplikasi — batas
+# ukuran unggahan, header keamanan, cache aset, rute SPA — tetap di nginx.conf,
+# satu tempat, supaya `docker compose up` di laptop dan produksi berperilaku
+# sama.
+#
+# SITE_DOMAIN diisi dari .env di server. Sertifikat diterbitkan dan diperpanjang
+# sendiri oleh Caddy begitu domain itu benar-benar menunjuk ke mesin ini.
+#
+# Belum punya domain? sslip.io menyelesaikan hostname menjadi IP yang tertulis
+# di dalamnya, dan Let's Encrypt mau menerbitkan sertifikat untuknya:
+#
+#   SITE_DOMAIN=203-0-113-45.sslip.io
+#
+# Cukup untuk demo dan sidang, dan bisa ditukar ke domain sungguhan nanti tanpa
+# mengubah apa pun selain satu baris itu.
+
+{$SITE_DOMAIN} {
+	encode gzip
+
+	reverse_proxy web:80 {
+		# Aplikasi membaca ini untuk membedakan http dari https, dan untuk
+		# mengetahui alamat asli pengunjung alih-alih alamat Caddy.
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Real-IP {remote_host}
+	}
+
+	# HSTS baru pantas dinyalakan di sini, bukan di nginx.conf: berkas ini yang
+	# benar-benar memegang sertifikatnya. Janji "selalu https" dari lapisan yang
+	# melayani http polos adalah janji yang tidak bisa ia tepati.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	# Unggahan dokumen peserta menembus 12 MB. Batas Caddy sendiri harus di atas
+	# batas nginx, supaya penolakan datang dari lapisan yang punya pesannya.
+	request_body {
+		max_size 15MB
+	}
+}

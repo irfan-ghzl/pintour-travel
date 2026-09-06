@@ -20,6 +20,7 @@ import (
 	domainDocument "github.com/irfan-ghzl/pintour-travel/internal/domain/document"
 	domainInvoice "github.com/irfan-ghzl/pintour-travel/internal/domain/invoice"
 	domainLead "github.com/irfan-ghzl/pintour-travel/internal/domain/lead"
+	pkg "github.com/irfan-ghzl/pintour-travel/internal/domain/package"
 	domainParticipant "github.com/irfan-ghzl/pintour-travel/internal/domain/participant"
 	"github.com/irfan-ghzl/pintour-travel/internal/domain/privacy"
 )
@@ -591,5 +592,119 @@ func TestDeletionRequestRepo_QueueCarriesTheRequester(t *testing.T) {
 	}
 	if len(done) != 0 {
 		t.Errorf("%d requests reported as done, want none", len(done))
+	}
+}
+
+// ─── Tiket 01: daftar keberangkatan lintas paket ─────────────────────────────
+
+// The cross-package batch listing makes three claims a fake cannot settle: the
+// head count comes from a subquery over participants, the ordering is expressed
+// in SQL against CURRENT_DATE, and both must survive the soft-delete rule the
+// rest of the listings follow.
+func TestPackageBatchRepo_ListAllOrdersByNearestAndCountsParticipants(t *testing.T) {
+	db := migratedDB(t)
+	f := seedBulk(t, db)
+	repo := NewPackageBatchRepo(db)
+	ctx := context.Background()
+
+	// A second package, so "lintas paket" is more than a claim about one row.
+	var otherPackageID string
+	must(t, db.QueryRowContext(ctx, `
+		INSERT INTO packages (name, slug, destination, duration_days, base_price, created_by)
+		VALUES ('Halal Tour Jepang', $1, 'Jepang', 8, 32000000, $2) RETURNING id`,
+		fmt.Sprintf("halal-jepang-%d", time.Now().UnixNano()), f.AdminID).Scan(&otherPackageID))
+
+	// One departure closer than the fixture's (which leaves in 45 days), and one
+	// already gone.
+	insertBatch := func(packageID string, offsetDays int, status string) string {
+		var id string
+		must(t, db.QueryRowContext(ctx, `
+			INSERT INTO package_batches (package_id, departure_date, return_date, quota,
+				price_single, price_double, price_triple, status)
+			VALUES ($1, CURRENT_DATE + $2::int, CURRENT_DATE + $2::int + 8, 25, 3, 2, 1, $3)
+			RETURNING id`, packageID, offsetDays, status).Scan(&id))
+		return id
+	}
+	soonID := insertBatch(otherPackageID, 5, "penuh")
+	pastID := insertBatch(otherPackageID, -30, "ditutup")
+
+	all, total, err := repo.ListAll(ctx, pkg.BatchFilter{Page: 1, PerPage: 50})
+	if err != nil {
+		t.Fatalf("list all: %v", err)
+	}
+	if total != 3 || len(all) != 3 {
+		t.Fatalf("listing returned %d rows (total %d), want 3", len(all), total)
+	}
+	if all[0].ID != soonID {
+		t.Errorf("first row = %s, want the departure five days out (%s)", all[0].ID, soonID)
+	}
+	if all[0].PackageName != "Halal Tour Jepang" {
+		t.Errorf("package_name = %q, want the joined package name", all[0].PackageName)
+	}
+	if last := all[len(all)-1].ID; last != pastID {
+		t.Errorf("last row = %s, want the departure already gone (%s)", last, pastID)
+	}
+
+	// The fixture put every participant on one batch; the two new ones are empty.
+	seeded := count(t, db, `SELECT COUNT(*) FROM participants WHERE batch_id=$1 AND deleted_at IS NULL`, f.BatchID)
+	for _, b := range all {
+		want := 0
+		if b.ID == f.BatchID {
+			want = seeded
+		}
+		if b.ParticipantCount == nil {
+			t.Errorf("participant_count for %s is absent; the cross-package listing counts", b.ID)
+			continue
+		}
+		if *b.ParticipantCount != want {
+			t.Errorf("participant_count for %s = %d, want %d", b.ID, *b.ParticipantCount, want)
+		}
+	}
+
+	// The per-package listing feeds the public catalogue, so it must not disclose
+	// how many seats a departure has sold.
+	perPackage, err := repo.ListByPackage(ctx, otherPackageID)
+	if err != nil {
+		t.Fatalf("list by package: %v", err)
+	}
+	if len(perPackage) != 2 {
+		t.Fatalf("per-package listing returned %d rows, want 2", len(perPackage))
+	}
+	for _, b := range perPackage {
+		if b.ParticipantCount != nil {
+			t.Errorf("per-package listing disclosed a head count for %s (%d) — it also serves the public catalogue",
+				b.ID, *b.ParticipantCount)
+		}
+	}
+
+	upcoming, upcomingTotal, err := repo.ListAll(ctx, pkg.BatchFilter{Upcoming: true, Page: 1, PerPage: 50})
+	if err != nil {
+		t.Fatalf("list upcoming: %v", err)
+	}
+	if upcomingTotal != 2 {
+		t.Errorf("upcoming total = %d, want 2", upcomingTotal)
+	}
+	for _, b := range upcoming {
+		if b.ID == pastID {
+			t.Error("upcoming=true still returned a departure that has left")
+		}
+	}
+
+	full := "penuh"
+	byStatus, _, err := repo.ListAll(ctx, pkg.BatchFilter{Status: &full, Page: 1, PerPage: 50})
+	if err != nil {
+		t.Fatalf("list by status: %v", err)
+	}
+	if len(byStatus) != 1 || byStatus[0].ID != soonID {
+		t.Errorf("status=penuh returned %d rows, want only %s", len(byStatus), soonID)
+	}
+
+	search := "jepang"
+	byName, _, err := repo.ListAll(ctx, pkg.BatchFilter{Search: &search, Page: 1, PerPage: 50})
+	if err != nil {
+		t.Fatalf("search by package name: %v", err)
+	}
+	if len(byName) != 2 {
+		t.Errorf("search=%q returned %d rows, want the two Halal Tour Jepang departures", search, len(byName))
 	}
 }

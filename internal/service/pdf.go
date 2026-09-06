@@ -44,6 +44,48 @@ func newDoc(orientation string, marginLeft, marginTop, marginRight float64) *doc
 
 func (d *doc) Cell(w, h float64, txt string) { d.Fpdf.Cell(w, h, d.tr(txt)) }
 
+// contentWidth is how much room a row actually has: A4 is 210 mm wide and every
+// document here is built with 20 mm margins on both sides.
+//
+// It exists because the number was never written down, so each table was sized
+// by eye and every one of them overflowed — the invoice by 20 mm, the airport
+// report by 10. Nothing complained: gofpdf draws happily past the margin, and
+// the result only shows up as a table whose right edge is flush against the
+// paper while the divider above it stops where it should.
+const contentWidth = 170.0
+
+// Kolom tabel invoice dan laporan bandara. Masing-masing kelompok dijumlahkan
+// menjadi contentWidth, dan TestPDFColumnsFitTheContentWidth menjaganya tetap
+// begitu — angka yang dipilih dengan mata adalah cara cacat ini muncul.
+const (
+	invNo    = 10.0
+	invDesc  = 90.0
+	invValue = contentWidth - invNo - invDesc
+
+	airNo    = 8.0
+	airName  = 64.0
+	airStep  = 32.0
+	airLast  = contentWidth - airNo - airName - 2*airStep
+)
+
+// footerBand draws the closing green band across the bottom of the page.
+//
+// Auto page break is switched off first, and that is the whole point. gofpdf
+// breaks when a cell would end past 2 cm from the bottom, while this band sits
+// at y=277 with its text at y=281 — deliberately inside that zone, because it is
+// the bottom of the page. Left on, the band was painted on page one but its text
+// pushed onto a fresh page two: white letters on white paper, so the invoice
+// arrived with a blank second sheet that nobody could see anything on.
+func (d *doc) footerBand(text string) {
+	d.SetAutoPageBreak(false, 0)
+	d.SetFillColor(16, 100, 59)
+	d.Rect(0, 277, 210, 20, "F")
+	d.SetTextColor(255, 255, 255)
+	d.SetFont("Helvetica", "", 8)
+	d.SetXY(20, 281)
+	d.Cell(0, 5, text)
+}
+
 func (d *doc) CellFormat(w, h float64, txt, border string, ln int, align string, fill bool, link int, linkStr string) {
 	d.Fpdf.CellFormat(w, h, d.tr(txt), border, ln, align, fill, link, linkStr)
 }
@@ -100,8 +142,8 @@ func (s *PDFService) GenerateInvoice(d InvoiceData) ([]byte, error) {
 	// Invoice meta
 	pdf.SetFont("Helvetica", "", 9)
 	pdf.SetTextColor(100, 100, 100)
-	pdf.CellFormat(95, 5, fmt.Sprintf("Tanggal Terbit: %s", d.IssuedAt.Format("02 January 2006")), "", 0, "L", false, 0, "")
-	pdf.CellFormat(95, 5, fmt.Sprintf("Jatuh Tempo: %s", d.DueDate.Format("02 January 2006")), "", 1, "L", false, 0, "")
+	pdf.CellFormat(contentWidth/2, 5, fmt.Sprintf("Tanggal Terbit: %s", d.IssuedAt.Format("02 January 2006")), "", 0, "L", false, 0, "")
+	pdf.CellFormat(contentWidth/2, 5, fmt.Sprintf("Jatuh Tempo: %s", d.DueDate.Format("02 January 2006")), "", 1, "L", false, 0, "")
 	pdf.Ln(5)
 
 	// Divider
@@ -127,9 +169,9 @@ func (s *PDFService) GenerateInvoice(d InvoiceData) ([]byte, error) {
 	pdf.SetDrawColor(200, 200, 200)
 	pdf.SetFont("Helvetica", "B", 9)
 	pdf.SetTextColor(30, 30, 30)
-	pdf.CellFormat(10, 8, "#", "1", 0, "C", true, 0, "")
-	pdf.CellFormat(100, 8, "Keterangan", "1", 0, "L", true, 0, "")
-	pdf.CellFormat(80, 8, "Nilai", "1", 1, "R", true, 0, "")
+	pdf.CellFormat(invNo, 8, "#", "1", 0, "C", true, 0, "")
+	pdf.CellFormat(invDesc, 8, "Keterangan", "1", 0, "L", true, 0, "")
+	pdf.CellFormat(invValue, 8, "Nilai", "1", 1, "R", true, 0, "")
 
 	items := []struct{ desc, val string }{
 		{"Paket Wisata", d.PackageName},
@@ -146,9 +188,9 @@ func (s *PDFService) GenerateInvoice(d InvoiceData) ([]byte, error) {
 		} else {
 			pdf.SetFillColor(255, 255, 255)
 		}
-		pdf.CellFormat(10, 7, fmt.Sprintf("%d", i+1), "1", 0, "C", fill, 0, "")
-		pdf.CellFormat(100, 7, item.desc, "1", 0, "L", fill, 0, "")
-		pdf.CellFormat(80, 7, item.val, "1", 1, "R", fill, 0, "")
+		pdf.CellFormat(invNo, 7, fmt.Sprintf("%d", i+1), "1", 0, "C", fill, 0, "")
+		pdf.CellFormat(invDesc, 7, item.desc, "1", 0, "L", fill, 0, "")
+		pdf.CellFormat(invValue, 7, item.val, "1", 1, "R", fill, 0, "")
 	}
 	pdf.Ln(4)
 
@@ -156,8 +198,8 @@ func (s *PDFService) GenerateInvoice(d InvoiceData) ([]byte, error) {
 	pdf.SetFillColor(16, 100, 59)
 	pdf.SetTextColor(255, 255, 255)
 	pdf.SetFont("Helvetica", "B", 11)
-	pdf.CellFormat(110, 10, "TOTAL TAGIHAN", "0", 0, "R", true, 0, "")
-	pdf.CellFormat(80, 10, fmt.Sprintf("Rp %s", format.Rupiah(d.Amount)), "0", 1, "R", true, 0, "")
+	pdf.CellFormat(contentWidth-invValue, 10, "TOTAL TAGIHAN", "0", 0, "R", true, 0, "")
+	pdf.CellFormat(invValue, 10, fmt.Sprintf("Rp %s", format.Rupiah(d.Amount)), "0", 1, "R", true, 0, "")
 	pdf.SetTextColor(30, 30, 30)
 	pdf.Ln(8)
 
@@ -185,13 +227,8 @@ func (s *PDFService) GenerateInvoice(d InvoiceData) ([]byte, error) {
 	pdf.Cell(0, 5, "melalui Portal Peserta. Admin akan mengkonfirmasi dalam 1x24 jam.")
 	pdf.Ln(35)
 
-	// Footer
-	pdf.SetFillColor(16, 100, 59)
-	pdf.Rect(0, 277, 210, 20, "F")
-	pdf.SetTextColor(255, 255, 255)
-	pdf.SetFont("Helvetica", "", 8)
-	pdf.SetXY(20, 281)
-	pdf.Cell(0, 5, fmt.Sprintf("Diterbitkan oleh: %s  |  %s  |  pintour.app", d.IssuedByName, d.IssuedAt.Format("02 Jan 2006 15:04")))
+	pdf.footerBand(fmt.Sprintf("Diterbitkan oleh: %s  |  %s  |  pintour.app",
+		d.IssuedByName, d.IssuedAt.Format("02 Jan 2006 15:04")))
 
 	var buf bytes.Buffer
 	if err := pdf.Output(&buf); err != nil {
@@ -245,7 +282,7 @@ func (s *PDFService) GenerateBriefing(d BriefingData) ([]byte, error) {
 		pdf.SetFillColor(240, 253, 244)
 		pdf.SetFont("Helvetica", "B", 10)
 		pdf.SetTextColor(16, 100, 59)
-		pdf.CellFormat(170, 7, "  "+sec.title, "LTR", 1, "L", true, 0, "")
+		pdf.CellFormat(contentWidth, 7, "  "+sec.title, "LTR", 1, "L", true, 0, "")
 		pdf.SetFillColor(250, 250, 250)
 		pdf.SetFont("Helvetica", "", 9)
 		pdf.SetTextColor(50, 50, 50)
@@ -253,13 +290,7 @@ func (s *PDFService) GenerateBriefing(d BriefingData) ([]byte, error) {
 		pdf.Ln(4)
 	}
 
-	// Footer
-	pdf.SetFillColor(16, 100, 59)
-	pdf.Rect(0, 277, 210, 20, "F")
-	pdf.SetTextColor(255, 255, 255)
-	pdf.SetFont("Helvetica", "", 8)
-	pdf.SetXY(20, 281)
-	pdf.Cell(0, 5, "Dokumen ini bersifat rahasia dan hanya untuk peserta terdaftar. © Pintour Travel")
+	pdf.footerBand("Dokumen ini bersifat rahasia dan hanya untuk peserta terdaftar. © Pintour Travel")
 
 	var buf bytes.Buffer
 	if err := pdf.Output(&buf); err != nil {
@@ -348,11 +379,11 @@ func (s *PDFService) GenerateAirportReport(d AirportReportData) ([]byte, error) 
 	pdf.SetFillColor(240, 253, 244)
 	pdf.SetTextColor(30, 30, 30)
 	pdf.SetFont("Helvetica", "B", 9)
-	pdf.CellFormat(8, 7, "#", "1", 0, "C", true, 0, "")
-	pdf.CellFormat(70, 7, "Nama Peserta", "1", 0, "L", true, 0, "")
-	pdf.CellFormat(33, 7, "Bagasi", "1", 0, "C", true, 0, "")
-	pdf.CellFormat(33, 7, "Tiket", "1", 0, "C", true, 0, "")
-	pdf.CellFormat(36, 7, "Paspor", "1", 1, "C", true, 0, "")
+	pdf.CellFormat(airNo, 7, "#", "1", 0, "C", true, 0, "")
+	pdf.CellFormat(airName, 7, "Nama Peserta", "1", 0, "L", true, 0, "")
+	pdf.CellFormat(airStep, 7, "Bagasi", "1", 0, "C", true, 0, "")
+	pdf.CellFormat(airStep, 7, "Tiket", "1", 0, "C", true, 0, "")
+	pdf.CellFormat(airLast, 7, "Paspor", "1", 1, "C", true, 0, "")
 
 	pdf.SetFont("Helvetica", "", 8)
 	for i, row := range d.Rows {
@@ -362,11 +393,11 @@ func (s *PDFService) GenerateAirportReport(d AirportReportData) ([]byte, error) 
 		} else {
 			pdf.SetFillColor(255, 255, 255)
 		}
-		pdf.CellFormat(8, 6, fmt.Sprintf("%d", i+1), "1", 0, "C", fill, 0, "")
-		pdf.CellFormat(70, 6, row.ParticipantName, "1", 0, "L", fill, 0, "")
-		pdf.CellFormat(33, 6, row.BaggageAt, "1", 0, "C", fill, 0, "")
-		pdf.CellFormat(33, 6, row.TicketAt, "1", 0, "C", fill, 0, "")
-		pdf.CellFormat(36, 6, row.PassportAt, "1", 1, "C", fill, 0, "")
+		pdf.CellFormat(airNo, 6, fmt.Sprintf("%d", i+1), "1", 0, "C", fill, 0, "")
+		pdf.CellFormat(airName, 6, row.ParticipantName, "1", 0, "L", fill, 0, "")
+		pdf.CellFormat(airStep, 6, row.BaggageAt, "1", 0, "C", fill, 0, "")
+		pdf.CellFormat(airStep, 6, row.TicketAt, "1", 0, "C", fill, 0, "")
+		pdf.CellFormat(airLast, 6, row.PassportAt, "1", 1, "C", fill, 0, "")
 	}
 
 	// Footer

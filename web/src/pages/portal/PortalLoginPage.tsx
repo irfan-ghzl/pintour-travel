@@ -85,8 +85,13 @@ export default function PortalLoginPage() {
           </button>
         </form>
 
+        {/* The old line said the password arrives "setelah pembayaran
+            dikonfirmasi", which was never how it worked: it is sent the moment
+            the consultant converts the booking, precisely so the participant can
+            log in and pay. Repeating it here told anyone who could not get in
+            that they were simply too early. */}
         <p className="text-center text-xs text-gray-400 mt-6">
-          Password dikirim via WhatsApp setelah pembayaran dikonfirmasi.<br />
+          Password dikirim via WhatsApp saat pendaftaran Anda dikonfirmasi konsultan.<br />
           Hubungi tim Pintour jika mengalami kendala.
         </p>
       </div>

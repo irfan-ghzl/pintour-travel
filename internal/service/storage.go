@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -13,6 +14,18 @@ import (
 	"strings"
 	"time"
 )
+
+// ErrStorageUnreachable reports that the storage backend could not be reached
+// or could not serve the request — DNS failure, refused connection, timeout, or
+// a 5xx from the bucket host.
+//
+// It is deliberately separate from an upload the backend actively rejected,
+// because the two deserve opposite answers. A file that is too large is the
+// caller's to fix; a storage host that no longer resolves is not, and telling a
+// participant "upload failed" about it sends them re-picking files forever.
+// Callers map this onto 503, which is also what the browser fallback watches
+// for.
+var ErrStorageUnreachable = errors.New("storage backend tidak dapat dihubungi")
 
 // StorageService integrates with Supabase Storage per PRD §16.2.
 //
@@ -52,7 +65,7 @@ type UploadResult struct {
 // File path inside bucket: {participantID or packageID}/{timestamp}-{filename}
 func (s *StorageService) Upload(ctx context.Context, bucket, ownerID string, fileHeader *multipart.FileHeader) (*UploadResult, error) {
 	if !s.enabled {
-		return nil, fmt.Errorf("storage service not configured (set SUPABASE_URL and SUPABASE_SERVICE_KEY)")
+		return nil, fmt.Errorf("%w: SUPABASE_URL dan SUPABASE_SERVICE_KEY belum diisi", ErrStorageUnreachable)
 	}
 	if fileHeader.Size > 5*1024*1024 {
 		return nil, fmt.Errorf("ukuran file melebihi 5MB")
@@ -84,9 +97,15 @@ func (s *StorageService) Upload(ctx context.Context, bucket, ownerID string, fil
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrStorageUnreachable, err)
 	}
 	defer resp.Body.Close()
+	// A 5xx is the bucket host failing, not the file failing. Grouping it with
+	// the 4xx below is how an outage got reported to participants as a rejected
+	// upload.
+	if resp.StatusCode >= 500 {
+		return nil, fmt.Errorf("%w: %s", ErrStorageUnreachable, resp.Status)
+	}
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("supabase upload failed: %s — %s", resp.Status, string(body))
@@ -103,7 +122,7 @@ func (s *StorageService) Upload(ctx context.Context, bucket, ownerID string, fil
 // Expiry: 3600s (1 hour) per PRD §19.2.
 func (s *StorageService) SignedURL(ctx context.Context, bucket, objectPath string, expirySec int) (string, error) {
 	if !s.enabled {
-		return "", fmt.Errorf("storage not configured")
+		return "", fmt.Errorf("%w: storage belum dikonfigurasi", ErrStorageUnreachable)
 	}
 	body := fmt.Sprintf(`{"expiresIn": %d}`, expirySec)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
@@ -116,9 +135,12 @@ func (s *StorageService) SignedURL(ctx context.Context, bucket, objectPath strin
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %v", ErrStorageUnreachable, err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 500 {
+		return "", fmt.Errorf("%w: %s", ErrStorageUnreachable, resp.Status)
+	}
 	if resp.StatusCode >= 400 {
 		return "", fmt.Errorf("supabase sign failed: %s", resp.Status)
 	}

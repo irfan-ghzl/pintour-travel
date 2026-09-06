@@ -243,8 +243,7 @@ func (h *UserHandler) ResetPassword(c echo.Context) error {
 	if err != nil {
 		return serverErr(c, err)
 	}
-	u.Password = string(hashed)
-	if err := h.repo.Update(c.Request().Context(), u); err != nil {
+	if err := h.repo.UpdatePassword(c.Request().Context(), u.ID, string(hashed)); err != nil {
 		return serverErr(c, err)
 	}
 	return c.JSON(http.StatusOK, ok(map[string]string{"message": "Password berhasil diubah, silakan login kembali"}))
@@ -457,8 +456,7 @@ func (h *UserHandler) ResetPasswordAdmin(c echo.Context) error {
 	if err != nil {
 		return notFound(c, "pengguna tidak ditemukan")
 	}
-	u.Password = string(hashed)
-	if err := h.repo.Update(c.Request().Context(), u); err != nil {
+	if err := h.repo.UpdatePassword(c.Request().Context(), u.ID, string(hashed)); err != nil {
 		return serverErr(c, err)
 	}
 	return c.JSON(http.StatusOK, ok(map[string]string{"message": "Password berhasil direset"}))

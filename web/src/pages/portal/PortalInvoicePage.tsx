@@ -1,12 +1,12 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { FileText, Upload, CheckCircle, Clock, Download, CreditCard } from 'lucide-react'
+import { FileText, Upload, CheckCircle, Clock, Download, CreditCard, XCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { portalApi } from '../../utils/api'
+import { portalApi, downloadInvoicePDF } from '../../utils/api'
 import { formatDateLong } from '../../utils/date'
 import FileUpload from '../../components/FileUpload'
-import type { Invoice, InvoiceStatus, UploadProofRequest } from '../../types'
+import type { InvoiceStatus, PortalInvoice, PortalPaymentProof, UploadProofRequest } from '../../types'
 
 const STATUS_COLORS: Record<InvoiceStatus, string> = {
   diterbitkan: 'bg-blue-100 text-blue-700',
@@ -37,6 +37,20 @@ function statusLabel(status: InvoiceStatus): string {
   return STATUS_LABELS[status] ?? String(status).replace(/_/g, ' ')
 }
 
+// stillOwes reports whether there is money left to pay on this bill, which is
+// what decides whether the two payment actions appear.
+//
+// It reads the balance rather than the status. Keying off "diterbitkan or
+// menunggu_bayar" hid both buttons the moment a partial payment moved the
+// invoice to "dibayar" — leaving a participant who had paid half with no way to
+// pay the rest, which is the one state where they most need one. A payment
+// already in flight at the gateway is left alone: paying twice is worse than
+// waiting a minute.
+function stillOwes(inv: PortalInvoice): boolean {
+  if (inv.status === 'lunas' || inv.status === 'menunggu_konfirmasi_gateway') return false
+  return (inv.remaining_balance ?? inv.amount) > 0
+}
+
 export default function PortalInvoicePage() {
   const [showUpload, setShowUpload] = useState<string | null>(null) // invoice id
   const [uploadForm, setUploadForm] = useState<UploadProofRequest>({
@@ -47,7 +61,7 @@ export default function PortalInvoicePage() {
   const { data, isLoading } = useQuery({
     queryKey: ['portal-invoices'],
     queryFn: () =>
-      portalApi.get<{ success: boolean; data: Invoice[] }>('/portal/invoices')
+      portalApi.get<{ success: boolean; data: PortalInvoice[] }>('/portal/invoices')
         .then(r => r.data.data),
   })
 
@@ -111,24 +125,47 @@ export default function PortalInvoicePage() {
               </div>
             </div>
 
+            {/* Sisa tagihan — only once part of it has actually been credited.
+                Showing "sisa = total" on an untouched invoice would just repeat
+                the line above it. */}
+            {(inv.paid_amount ?? 0) > 0 && (
+              <div className="grid grid-cols-2 gap-3 text-sm border-t pt-3">
+                <div>
+                  <p className="text-xs text-gray-400">Sudah Dibayar</p>
+                  <p className="font-medium text-emerald-700">
+                    Rp {inv.paid_amount.toLocaleString('id-ID')}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-400">Sisa Tagihan</p>
+                  <p className="font-bold text-gray-800">
+                    Rp {inv.remaining_balance.toLocaleString('id-ID')}
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Status indicator */}
             <StatusInfo status={inv.status} />
+
+            {/* Bukti transfer yang sudah dikirim peserta */}
+            <ProofList proofs={inv.proofs ?? []} />
 
             {/* Actions */}
             <div className="flex flex-col gap-2 pt-1">
               <div className="flex gap-2">
                 {/* Download PDF */}
-                <a
-                  href={`/api/v1/portal/invoices/${inv.id}/pdf`}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <button
+                  onClick={() => downloadInvoicePDF(inv.id, inv.invoice_number).catch(() =>
+                    toast.error('Gagal mengunduh PDF, coba lagi.'),
+                  )}
                   className="flex items-center gap-1.5 px-3 py-2 border rounded-lg text-sm text-gray-600 hover:bg-gray-50"
                 >
                   <Download size={14} /> Unduh PDF
-                </a>
+                </button>
 
                 {/* Bayar online via Midtrans — primary action */}
-                {(inv.status === 'diterbitkan' || inv.status === 'menunggu_bayar') && (
+                {stillOwes(inv) && (
                   <Link
                     to={`/portal/payment/${inv.id}`}
                     className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600 text-white text-sm rounded-lg hover:bg-emerald-700"
@@ -139,7 +176,7 @@ export default function PortalInvoicePage() {
               </div>
 
               {/* Upload bukti transfer — opsional untuk transfer manual */}
-              {(inv.status === 'diterbitkan' || inv.status === 'menunggu_bayar') && (
+              {stillOwes(inv) && (
                 <button
                   onClick={() => setShowUpload(inv.id)}
                   className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 w-fit"
@@ -219,6 +256,58 @@ export default function PortalInvoicePage() {
   )
 }
 
+// ProofList shows what became of every receipt the participant sent. Without it
+// an upload disappears into the system: the page looked exactly the same before
+// and after, so the only way to learn whether it had been seen was to ask the
+// consultant — which is the errand this portal exists to remove.
+function ProofList({ proofs }: { proofs: PortalPaymentProof[] }) {
+  if (proofs.length === 0) return null
+
+  const look: Record<PortalPaymentProof['status'], { icon: React.ReactNode; label: string; color: string }> = {
+    menunggu: {
+      icon: <Clock size={13} />,
+      label: 'Menunggu verifikasi admin',
+      color: 'text-yellow-700 bg-yellow-50',
+    },
+    disetujui: {
+      icon: <CheckCircle size={13} />,
+      label: 'Disetujui',
+      color: 'text-emerald-700 bg-emerald-50',
+    },
+    ditolak: {
+      icon: <XCircle size={13} />,
+      label: 'Ditolak',
+      color: 'text-red-700 bg-red-50',
+    },
+  }
+
+  return (
+    <div className="border-t pt-3 space-y-2">
+      <p className="text-xs font-medium text-gray-500">Bukti Transfer Anda</p>
+      {proofs.map(proof => {
+        const { icon, label, color } = look[proof.status] ?? {
+          icon: <Clock size={13} />, label: proof.status, color: 'text-gray-600 bg-gray-50',
+        }
+        return (
+          <div key={proof.id} className={`rounded-lg px-3 py-2 text-xs ${color}`}>
+            <div className="flex items-center gap-2">
+              {icon}
+              <span className="font-medium">{label}</span>
+              <span className="ml-auto font-mono">
+                Rp {proof.amount_claimed.toLocaleString('id-ID')}
+              </span>
+            </div>
+            {/* A rejection without its reason is an instruction to guess. */}
+            {proof.status === 'ditolak' && proof.review_notes && (
+              <p className="mt-1 pl-5 opacity-90">Alasan: {proof.review_notes}</p>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function StatusInfo({ status }: { status: InvoiceStatus }) {
   const info: Record<InvoiceStatus, { icon: React.ReactNode; text: string; color: string }> = {
     diterbitkan: {
@@ -236,14 +325,17 @@ function StatusInfo({ status }: { status: InvoiceStatus }) {
       text: 'Pembayaran Anda sedang menunggu konfirmasi dari payment gateway.',
       color: 'text-amber-600 bg-amber-50',
     },
+    // FR-INV-03: "dibayar" means money received, balance outstanding — not
+    // settled. Calling it "dikonfirmasi" told someone who had paid a deposit
+    // that they were done.
     dibayar: {
-      icon: <CheckCircle size={14} />,
-      text: 'Pembayaran dikonfirmasi. Portal peserta aktif',
+      icon: <Clock size={14} />,
+      text: 'Sebagian pembayaran sudah diterima. Sisa tagihan masih menunggu pelunasan.',
       color: 'text-purple-600 bg-purple-50',
     },
     lunas: {
       icon: <CheckCircle size={14} />,
-      text: 'Pembayaran lunas. Selamat bergabung!',
+      text: 'Pembayaran lunas. Itinerary dan briefing kini terbuka.',
       color: 'text-green-600 bg-green-50',
     },
   }

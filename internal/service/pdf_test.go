@@ -131,3 +131,78 @@ func TestGenerateAirportReport(t *testing.T) {
 		t.Errorf("airport report PDF too small: %d bytes", len(out))
 	}
 }
+
+// Invoice dan briefing memakai satu halaman penuh dengan pita hijau di kaki
+// halaman. Pita itu duduk di y=277 dan teksnya di y=281 — di dalam zona yang
+// dianggap gofpdf sebagai batas bawah, sehingga pemutus halaman otomatis
+// melemparkan teksnya ke halaman berikutnya. Akibatnya invoice tiba dengan
+// lembar kedua yang tampak kosong: huruf putih di atas kertas putih.
+//
+// Jumlah halaman dibaca dari berkasnya sendiri, bukan dari keadaan internal
+// gofpdf, karena yang diterima peserta adalah berkas itu.
+func countPDFPages(t *testing.T, b []byte) int {
+	t.Helper()
+	if !bytes.HasPrefix(b, []byte("%PDF-")) {
+		t.Fatalf("bukan berkas PDF: %q", string(b[:min(8, len(b))]))
+	}
+	return bytes.Count(b, []byte("/Type /Page")) - bytes.Count(b, []byte("/Type /Pages"))
+}
+
+func TestGenerateInvoice_FitsOnOnePage(t *testing.T) {
+	out, err := (&PDFService{}).GenerateInvoice(InvoiceData{
+		InvoiceNumber: "INV-202608-0010", IssuedAt: time.Now(),
+		DueDate:         calendar.Today().AddDays(7),
+		ParticipantName: "agiel", ParticipantPhone: "62895334442331",
+		PackageName: "Korea Selatan Honeymoon 7 Hari", BatchDate: "09 September 2026",
+		RoomType: "Double", Amount: 189000000,
+		Notes: "Invoice otomatis dibuat saat konversi leads.", IssuedByName: "Admin Pintour",
+	})
+	if err != nil {
+		t.Fatalf("GenerateInvoice: %v", err)
+	}
+	if n := countPDFPages(t, out); n != 1 {
+		t.Fatalf("invoice = %d halaman, ingin 1", n)
+	}
+}
+
+func TestGenerateBriefing_FitsOnOnePage(t *testing.T) {
+	out, err := (&PDFService{}).GenerateBriefing(BriefingData{
+		ParticipantName: "agiel", PackageName: "Korea Selatan Honeymoon 7 Hari",
+		DepartureDate: "09 September 2026", TourLeaderName: "Siti",
+		TourLeaderPhone: "628111000001", TourLeaderBio: "Tour leader berpengalaman.",
+	})
+	if err != nil {
+		t.Fatalf("GenerateBriefing: %v", err)
+	}
+	if n := countPDFPages(t, out); n != 1 {
+		t.Fatalf("briefing = %d halaman, ingin 1", n)
+	}
+}
+
+// A4 selebar 210 mm dengan margin 20 mm di kiri dan kanan menyisakan 170 mm.
+// Setiap kelompok kolom harus berjumlah persis itu.
+//
+// Ketiga tabel dulu melebihinya — invoice 190 mm pada tiga barisnya, laporan
+// bandara 180 mm — dan tidak ada yang mengeluh: gofpdf menggambar terus melewati
+// margin. Yang terlihat oleh peserta hanyalah tabel yang menempel di tepi
+// kertas sementara garis pemisah di atasnya berhenti di tempat yang benar.
+func TestPDFColumnsFitTheContentWidth(t *testing.T) {
+	cases := map[string][]float64{
+		"baris tanggal invoice": {contentWidth / 2, contentWidth / 2},
+		"tabel invoice":         {invNo, invDesc, invValue},
+		"bilah total invoice":   {contentWidth - invValue, invValue},
+		"tabel laporan bandara": {airNo, airName, airStep, airStep, airLast},
+	}
+	for nama, kolom := range cases {
+		var total float64
+		for _, w := range kolom {
+			if w <= 0 {
+				t.Fatalf("%s: ada kolom selebar %v", nama, w)
+			}
+			total += w
+		}
+		if total != contentWidth {
+			t.Errorf("%s: jumlah lebar = %v mm, ingin %v mm", nama, total, contentWidth)
+		}
+	}
+}

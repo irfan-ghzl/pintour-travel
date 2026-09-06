@@ -5,7 +5,8 @@ import { CreditCard, Loader2, CheckCircle, ArrowLeft } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { portalApi, createPortalPayment } from '../../utils/api'
 import { formatDate } from '../../utils/date'
-import type { Invoice } from '../../types'
+import { portalMeKey } from '../../hooks/usePortalMe'
+import type { PortalInvoice } from '../../types'
 import StatusBadge from '../../components/StatusBadge'
 
 // Snap.js is loaded dynamically; declare the global it attaches.
@@ -38,10 +39,15 @@ export default function PaymentPage() {
   const { data: invoices, isLoading: invLoading } = useQuery({
     queryKey: ['portal-invoices-dash'],
     queryFn: () =>
-      portalApi.get<{ success: boolean; data: Invoice[] }>('/portal/invoices').then((r) => r.data.data ?? []),
+      portalApi.get<{ success: boolean; data: PortalInvoice[] }>('/portal/invoices').then((r) => r.data.data ?? []),
   })
   const invoice = invoices?.find((i) => i.id === invoiceId)
-  const isPaid = invoice?.status === 'lunas'
+  // What the gateway will actually charge: the balance left after the approved
+  // proofs, which is what CreatePaymentForParticipant asks Midtrans for. Showing
+  // the full amount here put a different figure on this page than in the Snap
+  // popup that opens from it.
+  const amountDue = invoice ? (invoice.remaining_balance ?? invoice.amount) : 0
+  const isPaid = invoice?.status === 'lunas' || (invoice != null && amountDue <= 0)
 
   // Opening a Snap session is a mutation, not a query: it creates a transaction
   // at the gateway. As a query, react-query refetched it whenever the window
@@ -84,6 +90,11 @@ export default function PaymentPage() {
     window.snap.pay(payment.snap_token, {
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: ['portal-invoices-dash'] })
+        qc.invalidateQueries({ queryKey: ['portal-invoices'] })
+        // A settled invoice unlocks the itinerary, the briefing, and the tour
+        // leader. Refreshing /portal/me is what opens those menus on the spot —
+        // story 14 asks that nobody has to log in again to see them.
+        qc.invalidateQueries({ queryKey: portalMeKey })
         navigate('/portal?payment=success')
       },
       onPending: () => {
@@ -144,9 +155,18 @@ export default function PaymentPage() {
           <div className="flex justify-between items-center"><span className="text-gray-500">Status</span><StatusBadge status={invoice.status} /></div>
         </div>
 
+        {amountDue < invoice.amount && (
+          <div className="flex justify-between text-sm text-gray-500">
+            <span>Sudah dibayar</span>
+            <span>Rp {(invoice.amount - amountDue).toLocaleString('id-ID')}</span>
+          </div>
+        )}
+
         <div className="border-t pt-3 flex justify-between items-baseline">
-          <span className="text-sm text-gray-500">Total Tagihan</span>
-          <span className="text-2xl font-bold text-gray-800">Rp {invoice.amount.toLocaleString('id-ID')}</span>
+          <span className="text-sm text-gray-500">
+            {amountDue < invoice.amount ? 'Sisa Tagihan' : 'Total Tagihan'}
+          </span>
+          <span className="text-2xl font-bold text-gray-800">Rp {amountDue.toLocaleString('id-ID')}</span>
         </div>
 
         {error ? (

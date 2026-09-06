@@ -80,6 +80,11 @@ export interface PackageBatch {
   updated_at: string
   package_name: string
   tour_leader_name?: string
+  // Peserta yang sudah terdaftar pada keberangkatan ini. Dihitung oleh kueri,
+  // bukan kolom, dan hanya disertakan oleh daftar admin lintas paket — katalog
+  // publik tidak diberi tahu berapa kursi yang sudah terjual. Tidak ada
+  // (`undefined`) karena itu berarti "tidak dihitung", bukan "belum ada".
+  participant_count?: number
 }
 
 export interface PackageDetailResponse {
@@ -157,6 +162,13 @@ export interface CreateLeadRequest {
   pax: number
   message?: string
   source?: LeadSource
+  /**
+   * Persetujuan kebijakan privasi (§25.2). Dikirim eksplisit, bukan disimpulkan
+   * dari fakta bahwa permintaannya sampai: formulir memang menolak mengirim
+   * tanpa centang, tapi yang menjadi bukti persetujuan adalah kolom di basis
+   * data — dan kolom itu ikut terbawa ke peserta saat lead dikonversi.
+   */
+  consent_given?: boolean
 }
 
 // ─── Participants ────────────────��───────────────────────��────────────────────
@@ -222,6 +234,28 @@ export interface Invoice {
   participant_phone: string
   package_name: string
   issued_by_name: string
+}
+
+// PortalInvoice is the invoice as the person who owes it sees it: the bill plus
+// how far it has actually been paid. The invoice row alone answers neither
+// question someone mid-payment asks — what happened to the transfer I sent, and
+// how much is left — so the portal page reads these instead.
+export interface PortalInvoice extends Invoice {
+  paid_amount: number
+  remaining_balance: number
+  proofs: PortalPaymentProof[]
+}
+
+// PortalPaymentProof is one receipt as its uploader sees it. The stored path is
+// deliberately absent: a participant opens their own file through the signed-URL
+// endpoint, by id (§19.2).
+export interface PortalPaymentProof {
+  id: string
+  amount_claimed: number
+  status: 'menunggu' | 'disetujui' | 'ditolak'
+  review_notes: string
+  uploaded_at: string
+  reviewed_at?: string
 }
 
 export interface PaymentProof {

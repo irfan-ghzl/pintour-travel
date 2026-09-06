@@ -1,21 +1,33 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Luggage, Ticket, FileCheck, Loader2, Send, FileText } from 'lucide-react'
+import { Luggage, Ticket, FileCheck, Loader2, Send, FileText, PlaneTakeoff } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../../utils/api'
-import type { AirportChecklist, AirportChecklistResponse } from '../../types'
+import { formatDateLong } from '../../utils/date'
+import BatchPicker, { useBatchOptions } from '../../components/BatchPicker'
+import type { AirportChecklist, AirportChecklistResponse, PackageBatch } from '../../types'
 
 type FilterStatus = '' | 'pending' | 'done'
 
 export default function AdminAirportPage() {
+  // Halaman ini dulu tidak menampilkan apa pun sampai UUID batch diketik, dan
+  // UUID itu tidak pernah dicetak di layar mana pun — sehingga bagi siapa pun
+  // yang tidak membuka basis data, fiturnya praktis tidak ada. Sekarang
+  // keberangkatan terdekat dipilih sendiri saat halaman dibuka.
   const [batchID, setBatchID] = useState('')
+  const [batch, setBatch] = useState<PackageBatch | null>(null)
   const [statusFilter, setStatusFilter] = useState<FilterStatus>('')
-  const [inputBatch, setInputBatch] = useState('')
   const [showConfirmModal, setShowConfirmModal] = useState(false)
   const [confirmForm, setConfirmForm] = useState({
     gather_point: '', gather_time: '', gate: '', checkin_time: '',
   })
   const qc = useQueryClient()
+
+  // Dibaca di sini, bukan hanya di dalam pemilih, supaya halaman bisa
+  // membedakan "sedang memuat" dari "memang tidak ada keberangkatan mendatang".
+  // Keduanya dulu tampil sebagai layar kosong yang menyuruh mengetik UUID.
+  const { data: upcomingBatches, isLoading: batchesLoading } = useBatchOptions({})
+  const noUpcomingBatches = !batchesLoading && (upcomingBatches?.items ?? []).length === 0
 
   // Checklist rows are prepared once per batch, as their own action. The read
   // below polls every ten seconds, and it used to prepare them on the way past —
@@ -61,13 +73,6 @@ export default function AdminAirportPage() {
     onError: (e: any) => toast.error(e.response?.data?.message ?? 'Gagal mengirim konfirmasi'),
   })
 
-  const { data: reportData } = useQuery({
-    queryKey: ['airport-report', batchID],
-    queryFn: () =>
-      api.get(`/admin/airport/report?batch_id=${batchID}`).then(r => r.data),
-    enabled: false,
-  })
-
   const checklists = data?.checklists ?? []
   const progress = data?.progress
 
@@ -85,27 +90,43 @@ export default function AdminAirportPage() {
         <span className="text-xs text-gray-400">Auto-refresh 10 detik</span>
       </div>
 
-      {/* Batch input */}
-      <div className="flex gap-2">
-        <input
-          className="flex-1 border rounded-lg px-3 py-2 text-sm max-w-xs"
-          placeholder="Masukkan Batch ID..."
-          value={inputBatch}
-          onChange={e => setInputBatch(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && setBatchID(inputBatch.trim())}
+      {/* Pemilih keberangkatan — terdekat dipilih sendiri saat halaman dibuka */}
+      <div className="max-w-md space-y-1">
+        <label htmlFor="airport-batch" className="text-xs font-medium text-gray-600 block">
+          Keberangkatan
+        </label>
+        <BatchPicker
+          id="airport-batch"
+          value={batchID}
+          onChange={(id, picked) => { setBatchID(id); setBatch(picked ?? null) }}
+          autoSelectNearest
+          placeholder="Pilih keberangkatan..."
+          emptyLabel="Tidak ada keberangkatan mendatang. Tambahkan batch di menu Paket."
         />
-        <button
-          onClick={() => setBatchID(inputBatch.trim())}
-          className="px-4 py-2 bg-emerald-600 text-white text-sm rounded-lg hover:bg-emerald-700"
-        >
-          Muat
-        </button>
+        {/* Tanggalnya dieja penuh; jumlah orangnya tidak diulang di sini —
+            kartu ringkasan di bawah menghitung peserta yang benar-benar
+            ditangani, dan dua angka berdampingan hanya terbaca sebagai
+            pertentangan. */}
+        {batch && (
+          <p className="text-xs text-gray-500">
+            {batch.package_name} &middot; {formatDateLong(batch.departure_date)}
+          </p>
+        )}
       </div>
 
-      {!batchID && (
-        <div className="text-center py-12 text-gray-400">
-          <Loader2 className="mx-auto mb-3 opacity-30" size={40} />
-          <p>Masukkan Batch ID untuk memuat checklist peserta</p>
+      {batchesLoading && (
+        <div className="flex justify-center py-12">
+          <Loader2 className="animate-spin text-emerald-600" size={32} />
+        </div>
+      )}
+
+      {noUpcomingBatches && (
+        <div className="text-center py-12 text-gray-500">
+          <PlaneTakeoff className="mx-auto mb-3 opacity-30" size={40} />
+          <p className="font-medium text-gray-600">Belum ada keberangkatan mendatang</p>
+          <p className="text-sm mt-1">
+            Checklist bandara muncul begitu ada batch yang tanggal keberangkatannya belum lewat.
+          </p>
         </div>
       )}
 

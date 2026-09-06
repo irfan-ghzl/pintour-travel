@@ -66,20 +66,43 @@ func NewService(
 	}
 }
 
-// sumApprovedProofs returns the total amount of approved (disetujui) proofs for
-// an invoice — the derived "paid amount" (no paid_amount column, code-wins).
-func (s *Service) sumApprovedProofs(ctx context.Context, invoiceID string) (float64, error) {
-	proofs, err := s.proofs.GetByInvoice(ctx, invoiceID)
+// errNoInvoice means ProgressOf was handed nothing to measure. It is a
+// programmer's mistake rather than a caller's, and it is its own error so that
+// it is not mistaken for the ownership refusal it used to borrow.
+var errNoInvoice = errors.New("invoice tidak boleh kosong")
+
+// PaymentProgress is how far one invoice has actually been paid: the receipts
+// behind it, what they credited, and what is still owed.
+//
+// It is derived on read rather than stored, the same way every other path here
+// derives it, so the portal cannot show a balance the gateway would disagree
+// with.
+type PaymentProgress struct {
+	Proofs    []domainInvoice.PaymentProof
+	Paid      float64
+	Remaining float64
+}
+
+// ProgressOf reads how far inv has been paid.
+//
+// The portal shows it to the person who owes the money: without it the invoice
+// page says "Rp 25.000.000" to someone who transferred ten of it last week and
+// had that receipt approved. The payment gateway reads the same figure to decide
+// what to charge, which is the reason there is one function rather than two.
+func (s *Service) ProgressOf(ctx context.Context, inv *domainInvoice.Invoice) (PaymentProgress, error) {
+	if inv == nil {
+		return PaymentProgress{}, errNoInvoice
+	}
+	proofs, err := s.proofs.GetByInvoice(ctx, inv.ID)
 	if err != nil {
-		return 0, err
+		return PaymentProgress{}, err
 	}
-	var total float64
-	for _, p := range proofs {
-		if p.Status == "disetujui" {
-			total += p.AmountClaimed
-		}
-	}
-	return total, nil
+	paid := domainInvoice.ApprovedTotal(proofs) // §14.4
+	return PaymentProgress{
+		Proofs:    proofs,
+		Paid:      paid,
+		Remaining: inv.RemainingBalance(paid), // §14.4 Invoice.RemainingBalance
+	}, nil
 }
 
 // Create generates a new invoice, generates PDF, and sends WA.
@@ -103,11 +126,19 @@ func (s *Service) Create(ctx context.Context, inv *domainInvoice.Invoice) error 
 		if err != nil {
 			return
 		}
-		amount := fmt.Sprintf("Rp %s", format.Rupiah(inv.Amount))
+		// Angka saja — templat WhatsApp yang menuliskan "Rp", sama seperti yang
+		// sudah dilakukan jalur pembayaran diterima. Menambahkannya di sini juga
+		// membuat pesan yang sampai ke peserta berbunyi "Rp Rp 189.000.000".
+		amount := format.Rupiah(inv.Amount)
 		dueDate := inv.DueDate.Format("02 Jan 2006")
+		// Menunjuk peserta ke portal kini janji yang bisa ditepati: portal terbuka
+		// sejak peserta dibuat, dan PDF invoice termasuk yang bisa diunduh sebelum
+		// lunas. Kalimat lama — "tersedia di portal setelah pembayaran
+		// dikonfirmasi" — benar untuk portal yang dulu, dan justru menyuruh peserta
+		// tidak mencoba.
 		pdfLink := inv.PDFPath
 		if pdfLink == "" {
-			pdfLink = "(PDF tersedia di portal peserta)"
+			pdfLink = config.PortalBaseURL() + "/portal/invoices"
 		}
 		_ = s.fonnte.SendInvoice(bgCtx, pt.Phone, pt.Name,
 			inv.InvoiceNumber, amount, dueDate, pdfLink, inv.ID)
@@ -367,13 +398,11 @@ func (s *Service) settleApprovedProof(
 		return nil, err
 	}
 
-	var paid, thisClaim float64
+	paid := domainInvoice.ApprovedTotal(proofs) // §14.4
+	var thisClaim float64
 	for _, p := range proofs {
 		if p.ID == proofID {
 			thisClaim = p.AmountClaimed
-		}
-		if p.Status == "disetujui" {
-			paid += p.AmountClaimed
 		}
 	}
 
@@ -479,11 +508,13 @@ func (s *Service) CreatePaymentForParticipant(ctx context.Context, invoiceID, pa
 		return "", "", fmt.Errorf("payment gateway belum dikonfigurasi")
 	}
 
-	paid, err := s.sumApprovedProofs(ctx, invoiceID)
+	// The same reading the portal shows the participant, so the figure on the
+	// invoice page and the figure Midtrans charges cannot disagree.
+	progress, err := s.ProgressOf(ctx, inv)
 	if err != nil {
 		return "", "", err
 	}
-	remaining := inv.RemainingBalance(paid) // §14.4 Invoice.RemainingBalance
+	remaining := progress.Remaining
 	if remaining <= 0 {
 		return "", "", ErrInvoiceAlreadyPaid
 	}

@@ -55,6 +55,25 @@ func (r *userRepo) Update(ctx context.Context, u *user.User) error {
 	return err
 }
 
+func (r *userRepo) UpdatePassword(ctx context.Context, id, hashedPassword string) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE users SET password=$1,updated_at=NOW() WHERE id=$2`, hashedPassword, id)
+	if err != nil {
+		return err
+	}
+	// Baris yang tidak tersentuh dilaporkan sebagai galat, bukan sebagai sukses
+	// yang sunyi. Cacat sebelumnya justru berbentuk begitu: pemanggil menerima
+	// kabar berhasil sementara kata sandi lama masih berlaku.
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (r *userRepo) Deactivate(ctx context.Context, id string) error {
 	_, err := r.db.ExecContext(ctx, `UPDATE users SET is_active=false,updated_at=NOW() WHERE id=$1`, id)
 	return err

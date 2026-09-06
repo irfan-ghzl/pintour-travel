@@ -337,43 +337,54 @@ func (s *Service) UpdateProfile(ctx context.Context, p *domainParticipant.Partic
 	return s.participants.Update(ctx, p)
 }
 
+// errPortalCredentials is the only refusal portal login gives. Whether the
+// number is unknown, the password is wrong, or the account owns no tour at all,
+// the caller is told the same thing — a refusal that varies is a refusal that
+// says who has an account.
+var errPortalCredentials = errors.New("nomor WA atau password salah")
+
 // PortalLogin authenticates a customer by phone + password against the central
 // portal identity (v2.0 F1). It returns the participant used as the default tour
-// context — the active tour with the latest departure. Legacy accounts without a
+// context — the tour with the latest departure. Legacy accounts without a
 // portal_user row fall back to the per-participant password.
+//
+// It no longer asks whether the payment has been confirmed. That question used
+// to be answered here, which closed the chain the portal exists to open: the
+// pay-online button lives inside the portal, so requiring a settled invoice to
+// get in meant a participant had to have paid in order to pay. The gate did not
+// go away — it moved onto the travel content itself, where "not yet paid" is
+// what it actually means (see portalContentLocked in the delivery layer).
+//
+// The default tour is the newest departure rather than the newest SETTLED one,
+// which is also what makes a first-timer and a returning customer land in the
+// same place. Preferring a settled tour dropped a returning customer onto the
+// trip they finished last year, holding the invoice they had already paid, while
+// the one they were being chased for was nowhere on screen.
 func (s *Service) PortalLogin(ctx context.Context, phone, password string) (*domainParticipant.Participant, error) {
 	pu, err := lookupPortalUser(ctx, s.portalUsers, phone)
 	if err == nil && pu != nil {
 		if !pu.VerifyPassword(password) { // §14.4 PortalUser.VerifyPassword
-			return nil, fmt.Errorf("nomor WA atau password salah")
+			return nil, errPortalCredentials
 		}
 		trips, err := s.participants.ListByPortalUser(ctx, pu.ID, phone)
-		if err != nil {
-			return nil, fmt.Errorf("peserta tidak ditemukan")
+		if err != nil || len(trips) == 0 {
+			return nil, errPortalCredentials
 		}
-		// ListByPortalUser is ordered newest-departure-first; pick the first
-		// active tour as the default portal context. PortalUserID is set
+		// ListByPortalUser is ordered newest-departure-first. PortalUserID is set
 		// explicitly because the participant scan does not project it.
-		for i := range trips {
-			if trips[i].IsActive {
-				puID := pu.ID
-				trips[i].PortalUserID = &puID
-				return &trips[i], nil
-			}
-		}
-		return nil, fmt.Errorf("portal belum aktif, menunggu konfirmasi pembayaran")
+		current := trips[0]
+		puID := pu.ID
+		current.PortalUserID = &puID
+		return &current, nil
 	}
 
 	// Fallback: legacy participant-keyed login (pre-F1 accounts).
 	p, err := s.participants.GetByPhone(ctx, phone)
 	if err != nil {
-		return nil, fmt.Errorf("peserta tidak ditemukan")
-	}
-	if !p.IsActive {
-		return nil, fmt.Errorf("portal belum aktif, menunggu konfirmasi pembayaran")
+		return nil, errPortalCredentials
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(p.PortalPassword), []byte(password)); err != nil {
-		return nil, fmt.Errorf("nomor WA atau password salah")
+		return nil, errPortalCredentials
 	}
 	return p, nil
 }

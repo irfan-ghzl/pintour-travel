@@ -1,0 +1,46 @@
+# Overlay Cloudflare Tunnel — URL publik tanpa server.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.tunnel.yml up -d
+#
+# Dipakai saat aplikasi perlu bisa dijangkau dari luar tapi belum ada mesin yang
+# menyewanya: demo, sidang, dan menguji webhook yang tidak mungkin diuji di
+# localhost. Fonnte dan Midtrans mengirim ke alamat publik; selama stack hanya
+# hidup di 127.0.0.1, keduanya tidak punya jalan masuk sama sekali.
+#
+# cloudflared membuka koneksi keluar ke Cloudflare, lalu meneruskan trafik masuk
+# ke `web` lewat jaringan Docker. Tidak ada port yang dibuka di mesin ini, dan
+# tidak ada yang perlu diatur di router — arah koneksinya keluar, bukan masuk.
+#
+# Persiapan sekali saja, di dash.cloudflare.com → Zero Trust → Networks →
+# Tunnels:
+#
+#   1. Create a tunnel → Cloudflared → beri nama, mis. `pintour`
+#   2. Salin token yang muncul ke .env sebagai TUNNEL_TOKEN
+#   3. Public hostname: pilih domain Anda, Service = HTTP, URL = web:80
+#
+# Lalu di .env, ketiganya harus memakai domain yang sama:
+#
+#   TUNNEL_TOKEN=...
+#   APP_URL=https://<domain>
+#   PORTAL_BASE_URL=https://<domain>
+#
+# TLS ditangani Cloudflare, jadi Caddy di docker-compose.prod.yml tidak dipakai
+# di sini — keduanya tidak untuk digabung.
+
+services:
+  # Tanpa port publik. Trafik masuk lewat cloudflared, bukan lewat host.
+  web:
+    ports: !reset []
+    expose:
+      - "80"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: pintour_tunnel
+    restart: unless-stopped
+    # --no-autoupdate: pembaruan yang berjalan sendiri berarti proses restart di
+    # saat yang tidak Anda pilih. Saat demo, itu risiko yang tidak sebanding
+    # dengan manfaatnya.
+    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN:?wajib diisi di .env — ambil dari dashboard Cloudflare Zero Trust}
+    depends_on:
+      - web

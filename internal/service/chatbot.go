@@ -155,7 +155,7 @@ type geminiContent struct {
 type geminiRequest struct {
 	SystemInstruction *geminiContent  `json:"system_instruction,omitempty"`
 	Contents          []geminiContent `json:"contents"`
-	GenerationConfig  map[string]int  `json:"generationConfig"`
+	GenerationConfig  map[string]any  `json:"generationConfig"`
 }
 
 type geminiResponse struct {
@@ -226,8 +226,23 @@ func (s *ChatbotService) generateReply(ctx context.Context, history []chatbot.Lo
 		SystemInstruction: &geminiContent{
 			Parts: []geminiPart{{Text: buildSystemPrompt(pkgs, returningInfo)}},
 		},
-		Contents:         contents,
-		GenerationConfig: map[string]int{"maxOutputTokens": 300},
+		Contents: contents,
+		GenerationConfig: map[string]any{
+			// 300 terlalu sempit untuk pertanyaan yang wajar dijawab dengan
+			// daftar — "sebutkan paketnya apa saja" terpotong di tengah kalimat.
+			// Diukur: jawaban semacam itu selesai pada ~400 token.
+			"maxOutputTokens": 700,
+
+			// Penalaran dimatikan, dan ini yang menentukan.
+			//
+			// Model seri 2.5 memakai token keluaran untuk berpikir lebih dulu, dan
+			// jatah itu diambil dari maxOutputTokens yang sama. Terukur pada batas
+			// 300: 285 token habis untuk berpikir dan hanya 11 tersisa untuk
+			// jawabannya, sehingga balasan yang sampai ke pelanggan berhenti di
+			// tengah kalimat. Menjawab pertanyaan katalog tidak membutuhkan
+			// penalaran berlapis; yang dibutuhkan adalah jawaban yang utuh.
+			"thinkingConfig": map[string]any{"thinkingBudget": 0},
+		},
 	}
 	body, _ := json.Marshal(reqBody)
 
@@ -237,8 +252,8 @@ func (s *ChatbotService) generateReply(ctx context.Context, history []chatbot.Lo
 	}
 	url := fmt.Sprintf("%s/v1beta/models/%s:generateContent?key=%s", s.baseURL, model, s.apiKey)
 
-	// Retry once on transient failure (rate limit / timeout / empty candidate),
-	// which is the intermittent behaviour observed on the free tier.
+	// Retry once on transient failure (timeout / empty candidate), which is the
+	// intermittent behaviour observed on the free tier.
 	var lastErr error
 	for attempt := 1; attempt <= 2; attempt++ {
 		reply, err := s.callGemini(ctx, url, body)
@@ -249,11 +264,36 @@ func (s *ChatbotService) generateReply(ctx context.Context, history []chatbot.Lo
 		if err == nil {
 			lastErr = fmt.Errorf("gemini: balasan kosong")
 		}
+
+		// Kehabisan kuota dikecualikan dari percobaan ulang.
+		//
+		// Batas paket gratis dihitung per menit, dan Gemini menyebutkan sendiri
+		// berapa detik lagi ia mau dilayani — biasanya sekitar empat puluh.
+		// Mengulang 1,5 detik kemudian pasti gagal, dan kegagalan itu tetap
+		// dihitung sebagai satu permintaan. Jadi percobaan ulang di sini bukan
+		// sekadar sia-sia: ia menggandakan laju pemakaian persis ketika lajunya
+		// yang sedang jadi masalah, dan memperpanjang durasi kehabisan kuota.
+		if isQuotaExceeded(lastErr) {
+			return "", lastErr
+		}
+
 		if attempt < 2 {
 			time.Sleep(1500 * time.Millisecond)
 		}
 	}
 	return "", lastErr
+}
+
+// isQuotaExceeded melaporkan apakah kegagalan berasal dari batas laju, bukan
+// dari gangguan sesaat yang layak dicoba ulang.
+func isQuotaExceeded(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "status 429") ||
+		strings.Contains(msg, "resource_exhausted") ||
+		strings.Contains(msg, "exceeded your current quota")
 }
 
 // callGemini performs a single generateContent request and extracts the text.
@@ -273,7 +313,11 @@ func (s *ChatbotService) callGemini(ctx context.Context, url string, body []byte
 	var out geminiResponse
 	_ = json.NewDecoder(resp.Body).Decode(&out)
 	if out.Error != nil {
-		return "", fmt.Errorf("gemini: %s", out.Error.Message)
+		// Kode status ikut dibawa. Pesan dari Gemini berguna untuk dibaca manusia,
+		// tapi yang menentukan boleh-tidaknya dicoba ulang adalah statusnya, dan
+		// menebaknya dari kalimat berarti bergantung pada susunan kata yang bisa
+		// berubah kapan saja.
+		return "", fmt.Errorf("gemini: status %d: %s", resp.StatusCode, out.Error.Message)
 	}
 	if resp.StatusCode >= 400 || len(out.Candidates) == 0 {
 		return "", fmt.Errorf("gemini error: status %d", resp.StatusCode)

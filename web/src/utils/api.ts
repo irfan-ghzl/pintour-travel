@@ -1,5 +1,6 @@
 import axios from 'axios'
 
+import type { PackageBatch, PaginatedResponse, Participant } from '../types'
 import { saveBlob } from './download'
 
 // Admin/staff API — authentication is carried solely by the httpOnly session
@@ -79,6 +80,26 @@ export const downloadTripInvoice = async (participantId: string) => {
   saveBlob(res.data as Blob, `invoice-${participantId.slice(0, 8)}.pdf`)
 }
 
+// downloadInvoicePDF fetches the invoice PDF of the current tour.
+//
+// Both this and the briefing below used to be plain <a href> links straight at
+// the API. A browser navigation cannot carry the X-Portal-Token header the
+// portal authenticates with, so every click landed on
+// {"error":"UNAUTHORIZED","message":"Token portal diperlukan"} — the download
+// was unreachable by construction, not merely broken.
+export const downloadInvoicePDF = async (invoiceId: string, invoiceNumber?: string) => {
+  const res = await portalApi.get(`/portal/invoices/${invoiceId}/pdf`, {
+    responseType: 'blob',
+  })
+  saveBlob(res.data as Blob, `${invoiceNumber || `invoice-${invoiceId.slice(0, 8)}`}.pdf`)
+}
+
+// downloadBriefingPDF fetches the pre-departure briefing for the current tour.
+export const downloadBriefingPDF = async () => {
+  const res = await portalApi.get('/portal/briefing/pdf', { responseType: 'blob' })
+  saveBlob(res.data as Blob, 'briefing-keberangkatan.pdf')
+}
+
 // ── OCR (v2.0 F6 — self-hosted Tesseract) ─────────────────────────────────────
 export interface OCRExtraction {
   document_number?: string
@@ -103,6 +124,50 @@ export const getDocumentOCR = (documentId: string): Promise<OCRResult> =>
 
 export const applyParticipantNIK = (participantId: string, nik: string) =>
   api.patch(`/admin/participants/${participantId}/nik`, { nik }).then((r) => r.data)
+
+// ── Pemilih batch & peserta (admin) ───────────────────────────────────────────
+// Empat halaman admin dulu meminta operator mengetikkan UUID yang tidak pernah
+// ditampilkan aplikasi di mana pun. Kedua pembacaan di bawah ini adalah sumber
+// data pemilih yang menggantikannya.
+
+// BATCH_PAGE_SIZE sama dengan `maxPerPage` di helpers.go — server meng-clamp ke
+// angka itu, jadi meminta lebih tidak menghasilkan apa pun selain harapan palsu.
+const BATCH_PAGE_SIZE = 100
+
+export interface BatchPage {
+  items: PackageBatch[]
+  // total adalah cacah seluruh batch yang cocok, bukan yang terkirim. Pemilih
+  // membandingkan keduanya supaya pemotongan daftar tidak terjadi diam-diam.
+  total: number
+}
+
+// listAdminBatches membaca keberangkatan dari seluruh paket sekaligus — halaman
+// Peserta, Invoice, dan Airport Handling tidak punya paket di tangan lebih dulu.
+// Server mengurutkan terdekat lebih dulu, jadi halaman pertama adalah 100
+// keberangkatan paling relevan.
+export const listAdminBatches = (upcoming = true): Promise<BatchPage> =>
+  api
+    .get<PaginatedResponse<PackageBatch>>('/admin/batches', {
+      params: { ...(upcoming ? { upcoming: 'true' } : {}), per_page: BATCH_PAGE_SIZE },
+    })
+    .then((r) => ({ items: r.data.data ?? [], total: r.data.meta?.total ?? 0 }))
+
+// listPackageBatches membaca keberangkatan satu paket. Dipakai dialog konversi
+// lead, yang memang harus membatasi pilihan ke paket yang diminati lead itu.
+export const listPackageBatches = (packageId: string): Promise<PackageBatch[]> =>
+  api
+    .get<{ success: boolean; data: PackageBatch[] }>(`/admin/packages/${packageId}/batches`)
+    .then((r) => r.data.data ?? [])
+
+// searchParticipants mencari peserta lewat potongan nama atau nomor WhatsApp.
+// Endpoint-nya sudah disaring per konsultan, jadi pembatasan akses yang ada ikut
+// berlaku tanpa ditulis ulang di sini.
+export const searchParticipants = (search: string, perPage = 10): Promise<Participant[]> =>
+  api
+    .get<PaginatedResponse<Participant>>('/admin/participants', {
+      params: { ...(search ? { search } : {}), per_page: perPage },
+    })
+    .then((r) => r.data.data ?? [])
 
 // ── Chatbot logs (v2.0 F2) ────────────────────────────────────────────────────
 export interface ChatbotConversation {

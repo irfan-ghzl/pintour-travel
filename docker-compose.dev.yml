@@ -28,3 +28,9 @@ services:
   api:
     ports:
       - "127.0.0.1:8080:8080"
+    environment:
+      # Berkas dasar memaksa production supaya Validate() benar-benar berjalan di
+      # server. Di laptop itu justru menghalangi: PORTAL_BASE_URL memang localhost
+      # dan Midtrans memang sandbox, dan keduanya benar di sini. Penurunan ke
+      # development sengaja hanya ada di berkas yang dipanggil eksplisit.
+      APP_ENV: development

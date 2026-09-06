@@ -129,6 +129,24 @@ func (i *Invoice) IsFullyPaid(paid float64) bool {
 	return i != nil && paid >= i.Amount
 }
 
+// ApprovedTotal is what a set of payment proofs has actually credited to their
+// invoice. Only approved receipts count: a rejected one is money that never
+// arrived, and one still under review is money nobody has confirmed.
+//
+// It is the single statement of that rule. The manual settle path, the gateway
+// path, and the balance the portal shows all read it, so the amount a
+// participant is told they still owe cannot disagree with the amount the payment
+// gateway is asked for.
+func ApprovedTotal(proofs []PaymentProof) float64 {
+	var total float64
+	for _, p := range proofs {
+		if p.Status == "disetujui" {
+			total += p.AmountClaimed
+		}
+	}
+	return total
+}
+
 // PaymentProof is a transfer receipt uploaded by participant.
 type PaymentProof struct {
 	ID            string     `json:"id"`

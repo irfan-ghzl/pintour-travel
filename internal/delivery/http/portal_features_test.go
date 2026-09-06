@@ -20,6 +20,11 @@ import (
 
 // seedTwoPortalIdentities gives two unrelated customers one past trip each, so
 // "another portal identity's archive" is a real thing to ask for.
+//
+// Both trips are settled (is_active), which is what "riwayat perjalanan lampau,
+// yang memang sudah dibayar" means: the archive is open because those trips were
+// paid for, not because their dates have passed. A test that needs an unpaid one
+// says so over the top — TestMyTrips_UnpaidPastTripReadsAsCancelled does.
 func seedTwoPortalIdentities(h *harness) {
 	h.Packages.Seed(domainPkg.Package{
 		ID: "package-1", Name: "Umroh Reguler 9 Hari", Slug: "umroh-reguler",
@@ -42,7 +47,7 @@ func seedTwoPortalIdentities(h *harness) {
 		h.Participants.Seed(domainParticipant.Participant{
 			ID: c.participant, PortalUserID: &portalUser, BatchID: "batch-lama",
 			Name: c.participant, Phone: c.phone, RoomType: "double",
-			Email: c.participant + "@pintour.test", IsActive: false,
+			Email: c.participant + "@pintour.test", IsActive: true,
 			BatchDepartureDate: &lastYearAt, PackageName: "Umroh Reguler 9 Hari",
 		})
 	}
@@ -82,6 +87,11 @@ func TestMyTrips_PastTripsCarryACompletionBadge(t *testing.T) {
 func TestMyTrips_UnpaidPastTripReadsAsCancelled(t *testing.T) {
 	h := newHarness(t)
 	seedTwoPortalIdentities(h)
+	// The one trip in this file that was never paid for: a departure that came
+	// and went with no invoice ever settled.
+	unpaid := *h.Participants.participants["participant-a"]
+	unpaid.IsActive = false
+	h.Participants.Seed(unpaid)
 
 	res := h.asParticipant("participant-a", "portal-user-a").GET("/api/v1/portal/my-trips")
 	res.expectCode(http.StatusOK)
