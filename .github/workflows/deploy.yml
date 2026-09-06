@@ -135,9 +135,17 @@ jobs:
     permissions:
       contents: read
       packages: read
+    # url: sengaja tidak diisi di sini. GitHub tidak mengizinkan konteks
+    # `secrets` pada jobs.<id>.environment.url — yang boleh hanya github,
+    # needs, strategy, matrix, job, runner, env, vars, steps, dan inputs.
+    # Melanggarnya tidak membuat satu langkah gagal: SELURUH workflow ditolak
+    # sebelum satu job pun dibuat, jadi run-nya merah dalam hitungan detik
+    # dengan nol job, dan di daftar Actions namanya muncul sebagai path berkas
+    # karena `name:` pun tidak sempat terbaca. Gejalanya sama sekali tidak
+    # menunjuk ke baris ini. Alamat yang sama tetap dipakai di langkah
+    # verifikasi di bawah, tempat `secrets` memang diizinkan.
     environment:
       name: production
-      url: ${{ secrets.HEALTHCHECK_URL }}
     steps:
       - name: Deploy lewat SSH
         uses: appleboy/ssh-action@v1
